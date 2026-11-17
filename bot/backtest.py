@@ -479,16 +479,20 @@ def append_log(rows: list[dict], path: Path | None = None) -> None:
             w.writerow({k: r.get(k, "") for k in LOG_FIELDS})
 
 
-def variants_tried(log: list[dict], symbol: str, strategy: str | None = None) -> set[tuple[str, str]]:
+def variants_tried(log: list[dict], symbol: str, strategy: str | None = None,
+                   source: str | None = None) -> set[tuple[str, str]]:
+    """Distinct (strategy, params) tried. Tick and M1 runs are separate experiments."""
     return {(r["strategy"], r["params"]) for r in log
-            if r["symbol"] == symbol and (strategy is None or r["strategy"] == strategy)}
+            if r["symbol"] == symbol and (strategy is None or r["strategy"] == strategy)
+            and (source is None or r.get("source") == source)}
 
 
-def check_budget(log: list[dict], symbol: str, round_no: int, planned: list[tuple[str, dict]]) -> None:
+def check_budget(log: list[dict], symbol: str, round_no: int, planned: list[tuple[str, dict]],
+                 source: str | None = None) -> None:
     if not 1 <= round_no <= MAX_ROUNDS:
         raise SystemExit(f"round must be 1..{MAX_ROUNDS} (budget)")
     for strat in {s for s, _ in planned}:
-        seen = {p for s, p in variants_tried(log, symbol, strat)}
+        seen = {p for s, p in variants_tried(log, symbol, strat, source)}
         new = {params_key(p) for s, p in planned if s == strat} - seen
         if len(seen) + len(new) > MAX_COMBOS_PER_STRATEGY:
             raise SystemExit(f"budget: {strat} on {symbol} would reach {len(seen) + len(new)} "
@@ -580,7 +584,7 @@ def plateau_check(ev: Evaluator, strategy: str, params: dict, round_no: int) -> 
             and r["split"] == "validation" and r["source"] == ev.mkt.source}
     missing = [q for q in nbrs if params_key(q) not in have]
     if missing:
-        check_budget(log, ev.cfg.symbol, round_no, [(strategy, q) for q in missing])
+        check_budget(log, ev.cfg.symbol, round_no, [(strategy, q) for q in missing], ev.mkt.source)
         rows = []
         for q in missing:
             rows += log_rows(ev, round_no, strategy, q, "plateau neighbour check")
@@ -829,12 +833,12 @@ def _short(strategy: str, params: dict) -> str:
 
 def run_round(ev: Evaluator, round_no: int, plan: list[tuple[str, dict, str]]) -> None:
     log = read_log()
-    tried = variants_tried(log, ev.cfg.symbol)
+    tried = variants_tried(log, ev.cfg.symbol, source=ev.mkt.source)
     plan = [(s, p, r) for s, p, r in plan if (s, params_key(p)) not in tried]
     if not plan:
         print("all planned variants are already in the log")
         return
-    check_budget(log, ev.cfg.symbol, round_no, [(s, p) for s, p, _ in plan])
+    check_budget(log, ev.cfg.symbol, round_no, [(s, p) for s, p, _ in plan], ev.mkt.source)
     rows_out, table = [], []
     for s, p, reason in plan:
         rows = log_rows(ev, round_no, s, p, reason)
@@ -844,7 +848,7 @@ def run_round(ev: Evaluator, round_no: int, plan: list[tuple[str, dict, str]]) -
     _print_table(f"Round {round_no} on {ev.cfg.symbol} ({ev.mkt.source}), "
                  f"costs: commission {ev.cfg.commission()}/lot/side, slippage {ev.cfg.slippage()} "
                  f"per side, latency {ev.cfg.costs.latency_ms} ms", table)
-    total = len(variants_tried(read_log(), ev.cfg.symbol))
+    total = len(variants_tried(read_log(), ev.cfg.symbol, source=ev.mkt.source))
     print(f"\nTotal variants tried on {ev.cfg.symbol}: {total}")
 
 
@@ -880,7 +884,8 @@ def resolve_variant(v: dict, cfg: Config, source: str) -> dict:
     if base == "best":
         log = read_log()
         ranked = rank_candidates([c for c in candidates(log, cfg.symbol, source)
-                                  if c["strategy"] == strat], len(variants_tried(log, cfg.symbol)))
+                                  if c["strategy"] == strat],
+                                 len(variants_tried(log, cfg.symbol, source=source)))
         if not ranked:
             raise SystemExit(f"base 'best' needs round-1 results for {strat} on {cfg.symbol}")
         params = json.loads(ranked[0]["params"])
@@ -898,7 +903,7 @@ def resolve_variant(v: dict, cfg: Config, source: str) -> dict:
 def cmd_select(args, cfg: Config, ev: Evaluator | None = None, top: int = 10) -> list[dict]:
     log = read_log()
     source = args.source
-    n_trials = len(variants_tried(log, cfg.symbol))
+    n_trials = len(variants_tried(log, cfg.symbol, source=source))
     ranked = rank_candidates(candidates(log, cfg.symbol, source), n_trials)
     print(f"\nCandidates on {cfg.symbol} ({source}); variants tried = {n_trials}. "
           f"Eligible = >= {MIN_VAL_TRADES_FOR_SELECTION} validation trades, positive expectancy "
@@ -976,8 +981,9 @@ def cmd_final(args, cfg: Config) -> None:
     m2, _, _ = ev.run(strategy, params, a, b, 2.0)
     plateau_ok, notes = plateau_check(ev, strategy, params, max(1, int(args.round)))
     log = read_log()
-    n_trials = len(variants_tried(log, cfg.symbol))
-    val_srs = [_f(r, "sr_trade") for r in log if r["symbol"] == cfg.symbol and r["split"] == "validation"]
+    n_trials = len(variants_tried(log, cfg.symbol, source=ev.mkt.source))
+    val_srs = [_f(r, "sr_trade") for r in log if r["symbol"] == cfg.symbol
+               and r["split"] == "validation" and r.get("source") == ev.mkt.source]
     dsr = deflated_sharpe(m1["sr_trade"], m1["trades"], m1["skew"], m1["kurt"], val_srs, n_trials)
     gates = {
         f"profit factor > {FINAL_MIN_PF}": bool(m1["pf"] > FINAL_MIN_PF),

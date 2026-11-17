@@ -295,3 +295,13 @@ def test_btc_prices_keep_float64(tmp_project):
     BT.save_ticks("BTCUSD", np.arange(5, dtype="int64"), np.full(5, 95_000.25), np.full(5, 95_010.5))
     _, bid, _ = BT.open_ticks("BTCUSD")
     assert bid.dtype == np.float64 and bid[0] == 95_000.25
+
+
+def test_tick_and_m1_runs_have_separate_budgets():
+    log = [{"symbol": "XAUUSD", "strategy": "sweep", "source": "ticks", "params": json.dumps({"x": i})}
+           for i in range(20)]
+    with pytest.raises(SystemExit):                     # ticks budget is full
+        BT.check_budget(log, "XAUUSD", 2, [("sweep", {"x": 99})], "ticks")
+    BT.check_budget(log, "XAUUSD", 1, [("sweep", {"x": 1})], "m1")   # m1 starts fresh
+    assert len(BT.variants_tried(log, "XAUUSD", source="m1")) == 0
+    assert len(BT.variants_tried(log, "XAUUSD", source="ticks")) == 20
