@@ -37,6 +37,7 @@ from risk import RiskManager, lot_size
 from strategy import (DAY_MS, MINUTE_MS, STRATEGIES, Bars, Signal, TradeFilters,
                       apply_min_stop, build_bars, fmt_utc, generate, grid_combos,
                       local_minutes, neighbors, server_to_utc_ms, strategy_params,
+                      utc_to_server_ms,
                       trail_stop_level)
 
 MAX_ROUNDS = 5
@@ -638,11 +639,40 @@ def walkforward(ev: Evaluator, strategy: str, params: dict, folds: int = 5) -> d
 # ==========================================================================
 # Commands
 # ==========================================================================
-def cmd_fetch(args, cfg: Config) -> None:
-    from broker import MT5Broker  # Windows + MT5 only
-    br = MT5Broker(cfg)
+def _fmt_offset(minutes: float) -> str:
+    return f"UTC{'+' if minutes >= 0 else '-'}{abs(minutes) / 60:.1f}h"
+
+
+def check_server_clock(br, cfg: Config) -> None:
+    """Stop before saving anything if the server clock disagrees with SERVER_TZ.
+
+    MT5 stamps ticks in server time. A wrong SERVER_TZ shifts every session,
+    rollover and news window by the difference, silently.
+    """
+    seen = br.server_offset_minutes()
+    now = int(time.time() * 1000)
+    want = (int(utc_to_server_ms(np.array([now]), cfg.server_tz)[0]) - now) / MINUTE_MS
+    if seen is None:
+        print("WARNING: quotes are not live (market closed?), so the server clock could not be "
+              f"checked. Make sure SERVER_TZ={cfg.server_tz} matches your broker.")
+        return
+    if abs(seen - want) > 1:
+        raise SystemExit(
+            f"Server clock is {_fmt_offset(seen)} but SERVER_TZ={cfg.server_tz} means "
+            f"{_fmt_offset(want)}. Nothing was saved. Set SERVER_TZ in .env to match the "
+            "server (Exness = UTC; many brokers and MetaQuotes-Demo use Europe/Athens, "
+            "i.e. UTC+2 in winter and UTC+3 in summer), then fetch again.")
+    print(f"server clock OK ({_fmt_offset(seen)}, SERVER_TZ={cfg.server_tz})")
+
+
+def cmd_fetch(args, cfg: Config, broker=None) -> None:
+    if broker is None:
+        from broker import MT5Broker  # Windows + MT5 only
+        broker = MT5Broker(cfg)
+    br = broker
     br.connect()
     name = br.resolve_symbol(cfg.symbol)
+    check_server_clock(br, cfg)
     spec = br.symbol_spec(name)
     C.DATA_DIR.mkdir(parents=True, exist_ok=True)
     spec_file(cfg.symbol).write_text(spec.to_json(), encoding="utf-8")
