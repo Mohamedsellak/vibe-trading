@@ -1,0 +1,14 @@
+[
+  {"strategy": "breakout", "base": "best", "params": {"trend_filter": true},
+   "reason": "trend filter: session-open breakouts that agree with the higher-timeframe trend are less likely to be false starts"},
+  {"strategy": "breakout", "base": "best", "params": {"tp_r": 3.0, "hold_min": 90},
+   "reason": "bigger target: let genuine session-open trends run so the fixed trade cost is a smaller share of the move"},
+  {"strategy": "meanrev", "base": "best", "params": {"trend_filter": true},
+   "reason": "trend filter: buy dips only in a rising higher-timeframe trend and sell rallies only in a falling one"},
+  {"strategy": "meanrev", "base": "best", "params": {"min_tp_atr": 1.5, "hold_min": 45},
+   "reason": "bigger target: fade only stretches whose snap-back target is far enough to clearly exceed costs"},
+  {"strategy": "sweep", "base": "best", "params": {"trend_filter": true},
+   "reason": "trend filter: a stop run against the higher-timeframe trend reverses back into the trend more often"},
+  {"strategy": "sweep", "base": "best", "params": {"tp_r": 3.0, "hold_min": 90},
+   "reason": "bigger target: a real rejection after a stop run can travel further than 2R given time"}
+]

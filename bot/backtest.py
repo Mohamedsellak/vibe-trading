@@ -23,7 +23,7 @@ import math
 import sys
 import time
 from collections import Counter
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -282,7 +282,15 @@ class Trade:
 
 def simulate(mkt: Market, signals: list[Signal], cfg: Config, filters: TradeFilters,
              start_ms: int, end_ms: int, slip_mult: float = 1.0,
-             equity0: float | None = None) -> tuple[list[Trade], Counter]:
+             equity0: float | None = None,
+             kill_switch: bool = False) -> tuple[list[Trade], Counter]:
+    """Tick-level simulation.
+
+    kill_switch=False (research default): the permanent max-drawdown stop is
+    off, so every split is measured over its whole period. A live bot would
+    stop at MAX_DRAWDOWN_PCT; the drawdown is reported in the metrics instead.
+    Daily loss, trades per day, cooldown and open-position limits stay on.
+    """
     spec = mkt.spec
     t, bid, ask = mkt.t, mkt.bid, mkt.ask
     slip = cfg.slippage() * slip_mult
@@ -290,7 +298,8 @@ def simulate(mkt: Market, signals: list[Signal], cfg: Config, filters: TradeFilt
     vpu = spec.value_per_price_unit
     lat = cfg.costs.latency_ms
     equity = cfg.starting_equity if equity0 is None else equity0
-    risk = RiskManager(cfg.risk, equity, cfg.server_tz)
+    rcfg = cfg.risk if kill_switch else replace(cfg.risk, max_drawdown_pct=float("inf"))
+    risk = RiskManager(rcfg, equity, cfg.server_tz)
     open_trades: list[tuple[int, float]] = []
     trades: list[Trade] = []
     skips: Counter = Counter()

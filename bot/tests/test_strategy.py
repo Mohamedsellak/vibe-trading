@@ -230,3 +230,20 @@ def test_symbol_costs_come_from_env_but_code_can_override(tmp_path, monkeypatch)
     assert cfg.commission() == 0.0 and cfg.slippage() == 0.07
     cfg.costs.commission_per_lot_side = 3.0          # a later explicit setting wins
     assert cfg.commission() == 3.0
+
+
+def test_trend_filter_keeps_only_trades_with_the_trend():
+    from strategy import trend_slope
+    t0 = ms(2026, 1, 15, 0, 0)
+    n = 8 * 60
+    base = list(np.linspace(95.0, 100.5, n))        # steady uptrend into 08:00
+    o = base[:]; h = [x + 0.1 for x in base]; l = [x - 0.1 for x in base]; c = base[:]
+    asia_low = min(l[:360])
+    o += [100.4]; h += [100.5]; l += [asia_low - 2.0]; c += [asia_low + 0.3]   # sweep + reclaim
+    b = make_bars(t0, o, h, l, c)
+    assert trend_slope(b)[-1] > 0
+    p = {"pierce_atr": 0.1, "confirm_bars": 1, "max_sl_atr": 100.0}
+    plain = generate("sweep", b, p, "UTC")
+    assert {s.side for s in plain} == {1, -1}         # a long and a short against the trend
+    kept = generate("sweep", b, {**p, "trend_filter": True}, "UTC")
+    assert [s.side for s in kept] == [1]              # only the long, with the uptrend, survives

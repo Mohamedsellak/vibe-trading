@@ -198,6 +198,12 @@ def trail_stop_level(best_px, entry: float, sl0: float, sl_dist: float, side: in
     return np.where(mfe >= activate_r * sl_dist, lvl, sl0)
 
 
+def trend_slope(b: Bars, n: int = 240, slope_bars: int = 60) -> np.ndarray:
+    """Higher-timeframe trend: change of EMA(n) of closes over the last slope_bars bars."""
+    ema = pd.Series(b.c).ewm(span=n, adjust=False, min_periods=n).mean()
+    return (ema - ema.shift(slope_bars)).to_numpy(copy=True)
+
+
 def ny_session_mask(b: Bars, p: dict) -> np.ndarray:
     """True for bars inside the New York session when p['session'] == 'newyork'."""
     if p.get("session", "all") != "newyork":
@@ -364,7 +370,8 @@ STRATEGIES: dict[str, dict] = {
         "defaults": {"atr_n": 14, "london_open": "08:00", "ny_open": "09:30",
                      "range_min": 60, "entry_window_min": 60, "exp_mult": 1.5,
                      "buffer_atr": 0.0, "sl_atr": 1.5, "tp_r": 1.5, "hold_min": 30,
-                     "session": "all", "ny_start": "08:00", "ny_end": "16:00", "trail": False},
+                     "session": "all", "ny_start": "08:00", "ny_end": "16:00", "trail": False,
+                     "trend_filter": False, "trend_n": 240, "trend_slope_bars": 60},
         "grid": {"range_min": [30, 60], "exp_mult": [1.0, 1.5, 2.0], "tp_r": [1.0, 2.0]},
         "reasons": {
             "range_min": "how much pre-open consolidation defines the level liquidity sits behind",
@@ -377,7 +384,8 @@ STRATEGIES: dict[str, dict] = {
         "defaults": {"atr_n": 14, "bb_n": 20, "bb_k": 2.0, "er_n": 30, "er_max": 0.3,
                      "sl_atr": 1.5, "min_tp_atr": 0.5, "hold_min": 20, "min_gap_bars": 10,
                      "active_start_utc": 420, "active_end_utc": 1200,
-                     "session": "all", "ny_start": "08:00", "ny_end": "16:00", "trail": False},
+                     "session": "all", "ny_start": "08:00", "ny_end": "16:00", "trail": False,
+                     "trend_filter": False, "trend_n": 240, "trend_slope_bars": 60},
         "grid": {"bb_k": [2.0, 2.5], "er_max": [0.2, 0.3], "sl_atr": [1.0, 1.5, 2.0]},
         "reasons": {
             "bb_k": "how stretched price must be before liquidity-provision pays",
@@ -390,7 +398,8 @@ STRATEGIES: dict[str, dict] = {
         "defaults": {"atr_n": 14, "asia_start_utc": 0, "asia_end_utc": 360,
                      "active_start_utc": 420, "active_end_utc": 1200, "pierce_atr": 0.2,
                      "confirm_bars": 3, "sl_buf_atr": 0.2, "max_sl_atr": 4.0, "tp_r": 1.5,
-                     "hold_min": 45, "session": "all", "ny_start": "08:00", "ny_end": "16:00", "trail": False},
+                     "hold_min": 45, "session": "all", "ny_start": "08:00", "ny_end": "16:00", "trail": False,
+                     "trend_filter": False, "trend_n": 240, "trend_slope_bars": 60},
         "grid": {"pierce_atr": [0.1, 0.3], "confirm_bars": [1, 3], "tp_r": [1.0, 1.5, 2.0]},
         "reasons": {
             "pierce_atr": "a sweep must run far enough to trigger resting stops",
@@ -416,6 +425,9 @@ def grid_combos(name: str) -> list[dict]:
 def generate(name: str, bars: Bars, params: dict, server_tz: str) -> list[Signal]:
     p = strategy_params(name, params)
     sigs = STRATEGIES[name]["fn"](bars, p, server_tz)
+    if p.get("trend_filter") and sigs:
+        slope = trend_slope(bars, int(p["trend_n"]), int(p["trend_slope_bars"]))
+        sigs = [s for s in sigs if np.isfinite(slope[s.bar_idx]) and s.side * slope[s.bar_idx] > 0]
     if p.get("trail"):
         sigs = [replace(s, trail_activate_r=float(p["trail_activate_r"]),
                         trail_lock=float(p["trail_lock"]), trail_step_r=float(p["trail_step_r"]))

@@ -305,3 +305,16 @@ def test_tick_and_m1_runs_have_separate_budgets():
     BT.check_budget(log, "XAUUSD", 1, [("sweep", {"x": 1})], "m1")   # m1 starts fresh
     assert len(BT.variants_tried(log, "XAUUSD", source="m1")) == 0
     assert len(BT.variants_tried(log, "XAUUSD", source="ticks")) == 20
+
+
+def test_research_backtest_does_not_stop_at_kill_switch():
+    cfg = cfg_for_test(slip=0.0, commission=0.0)
+    cfg.risk.max_drawdown_pct = 1.0                    # tiny: the first loss would trip it
+    cfg.risk.cooldown_after_losses = 99
+    prices = [100.0] * 62 + [90.0] * 600 + [90.0] * 600 + [80.0] * 2000
+    t, p = path_ticks(T0, prices)
+    mkt = market(t, p)
+    sigs = one_signal(0, T0 + MINUTE_MS, hold=5) + one_signal(15, T0 + 16 * MINUTE_MS, hold=5)
+    full, _ = run(mkt, sigs, cfg)
+    stopped, skips = run(mkt, sigs, cfg, kill_switch=True)
+    assert len(full) == 2 and len(stopped) == 1 and skips["kill_switch"] == 1
