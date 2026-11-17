@@ -1,0 +1,14 @@
+[
+  {"strategy": "breakout", "base": "best", "params": {"trail": true},
+   "reason": "trailing stop: once a trade reaches the set gain, lock part of the open profit so a faded move cannot turn into a full loss"},
+  {"strategy": "meanrev", "base": "best", "params": {"trail": true},
+   "reason": "trailing stop: once a trade reaches the set gain, lock part of the open profit so a faded move cannot turn into a full loss"},
+  {"strategy": "sweep", "base": "best", "params": {"trail": true},
+   "reason": "trailing stop: once a trade reaches the set gain, lock part of the open profit so a faded move cannot turn into a full loss"},
+  {"strategy": "breakout", "base": "best", "params": {"session": "newyork"},
+   "reason": "New York only: US data and COMEX/equity-open flow give gold its deepest liquidity and largest moves"},
+  {"strategy": "meanrev", "base": "best", "params": {"session": "newyork"},
+   "reason": "New York only: US data and COMEX/equity-open flow give gold its deepest liquidity and largest moves"},
+  {"strategy": "sweep", "base": "best", "params": {"session": "newyork"},
+   "reason": "New York only: US data and COMEX/equity-open flow give gold its deepest liquidity and largest moves"}
+]

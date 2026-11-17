@@ -1,0 +1,7 @@
+# One row per scheduled high-impact release, times in UTC. No entries from
+# minutes_before to minutes_after. Empty minutes use the defaults (15 / 30).
+# The backtest uses this file too: add the PAST events of your data period
+# (NFP, CPI, FOMC, ...) or the backtest will trade through news the bot skips.
+# Example row (remove the leading #):
+# 2026-12-04 13:30,15,30,US NFP
+utc_time,minutes_before,minutes_after,event
