@@ -247,3 +247,40 @@ def test_trend_filter_keeps_only_trades_with_the_trend():
     assert {s.side for s in plain} == {1, -1}         # a long and a short against the trend
     kept = generate("sweep", b, {**p, "trend_filter": True}, "UTC")
     assert [s.side for s in kept] == [1]              # only the long, with the uptrend, survives
+
+
+# ---- round 4 strategies ----
+def test_roundnum_fires_on_forceful_close_through_level():
+    t0 = ms(2026, 1, 15, 9, 0)
+    o, h, l, c = _flat_then(t0, 40, base=4548.0, wiggle=0.2)
+    o += [4548.2]; h += [4551.5]; l += [4548.0]; c += [4551.0]      # big bar closes above 4550
+    sigs = generate("roundnum", make_bars(t0, o, h, l, c), {"level_step": 50, "exp_mult": 1.5}, "UTC")
+    assert len(sigs) == 1 and sigs[0].side == 1 and sigs[0].note == "4550"
+    assert sigs[0].sl_dist > 1.0                                      # stop back below the level
+
+
+def test_roundnum_ignores_weak_crossings():
+    t0 = ms(2026, 1, 15, 9, 0)
+    o, h, l, c = _flat_then(t0, 40, base=4549.8, wiggle=0.2)
+    o += [4549.9]; h += [4550.4]; l += [4549.8]; c += [4550.3]      # drifts across, no force
+    assert generate("roundnum", make_bars(t0, o, h, l, c), {"exp_mult": 2.5}, "UTC") == []
+
+
+def test_impulse_fires_on_large_bar_closing_at_extreme():
+    t0 = ms(2026, 1, 15, 9, 0)
+    o, h, l, c = _flat_then(t0, 80)
+    o += [100.0]; h += [101.5]; l += [99.95]; c += [101.4]
+    sigs = generate("impulse", make_bars(t0, o, h, l, c), {"k": 2.0}, "UTC")
+    assert len(sigs) == 1 and sigs[0].side == 1 and np.isclose(sigs[0].sl_dist, 0.5 * 1.55)
+
+
+def test_vwappull_long_on_vwap_test_in_uptrend():
+    from strategy import session_vwap
+    t0 = ms(2026, 1, 15, 8, 0)
+    c = list(np.linspace(100.0, 104.0, 200))
+    o = [x - 0.02 for x in c]; h = [x + 0.3 for x in c]; l = [x - 0.3 for x in c]
+    vw, _ = session_vwap(make_bars(t0, o, h, l, c), "UTC")
+    low = float(vw[-1])
+    o += [low + 0.5]; h += [low + 0.9]; l += [low - 0.05]; c += [low + 0.8]
+    sigs = generate("vwappull", make_bars(t0, o, h, l, c), {"er_min": 0.2, "touch_atr": 0.5}, "UTC")
+    assert len(sigs) == 1 and sigs[0].side == 1 and sigs[0].bar_idx == 200

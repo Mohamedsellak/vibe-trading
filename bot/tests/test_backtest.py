@@ -217,7 +217,8 @@ def test_end_to_end_pipeline_on_synthetic_data(tmp_project, capsys):
     assert "trading days: 48" in out and "final" in out
     BT.main(["dev", "--symbol", "XAUUSD", "--round", "1"])
     log = BT.read_log()
-    assert len(log) == 2 * 36 and {r["split"] for r in log} == {"train", "validation"}
+    n_grid = sum(len(BT.grid_combos(s)) for s in BT.STRATEGIES)
+    assert len(log) == 2 * n_grid and {r["split"] for r in log} == {"train", "validation"}
     # dev never touches the final split
     ev = BT.Evaluator(cfg, BT.load_market(cfg))
     fin_start = ev.splits.final[0]
@@ -229,7 +230,7 @@ def test_end_to_end_pipeline_on_synthetic_data(tmp_project, capsys):
     log = BT.read_log()
     r2 = [r for r in log if r["round"] == "2" and r["split"] == "validation"]
     assert len(r2) == 6 and all(r["reason"] for r in r2)
-    assert len(BT.variants_tried(log, "XAUUSD")) == 42
+    assert len(BT.variants_tried(log, "XAUUSD")) == n_grid + 6
     for strat in ("breakout", "meanrev", "sweep"):
         assert len(BT.variants_tried(log, "XAUUSD", strat)) == 14
     trailed = [json.loads(r["params"]) for r in r2 if json.loads(r["params"]).get("trail")]

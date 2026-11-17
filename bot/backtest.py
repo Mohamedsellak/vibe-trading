@@ -874,13 +874,14 @@ def cmd_dev(args, cfg: Config) -> None:
     ev = Evaluator(cfg, load_market(cfg, args.source))
     names = list(STRATEGIES) if args.strategy == "all" else [args.strategy]
     plan = []
-    if args.round == 1:
+    if args.round == 1 or args.baseline:
         for s in names:
             reason = "baseline grid: " + "; ".join(STRATEGIES[s]["reasons"].values())
             plan += [(s, strategy_params(s, g), reason) for g in grid_combos(s)]
     else:
         if not args.variants:
-            raise SystemExit("rounds 2-5 need --variants file.json with a reason per variant")
+            raise SystemExit("rounds 2-5 need --variants file.json with a reason per variant, "
+                             "or --baseline to run a new strategy's starting grid")
         for v in json.loads(Path(args.variants).read_text(encoding="utf-8")):
             if not v.get("reason", "").strip():
                 raise SystemExit(f"variant without a reason: {v}")
@@ -1056,6 +1057,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--strategy", default="all", choices=["all", *STRATEGIES])
     p.add_argument("--round", type=int, default=1)
     p.add_argument("--variants", default=None)
+    p.add_argument("--baseline", action="store_true",
+                   help="run the starting grid of --strategy in this round (for strategies added later)")
     common(sub.add_parser("select"))
     p = common(sub.add_parser("walkforward"))
     p.add_argument("--strategy", required=True, choices=list(STRATEGIES))

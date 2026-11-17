@@ -1,0 +1,12 @@
+[
+  {"strategy": "vwappull", "params": {"er_min": 0.13, "touch_atr": 0.5, "tp_r": 1.5},
+   "reason": "calibration: er_min 0.13 = 75th percentile of ER(120) on train; 0.3 was above the 99th so it never traded"},
+  {"strategy": "vwappull", "params": {"er_min": 0.13, "touch_atr": 0.5, "tp_r": 2.5},
+   "reason": "calibration: er_min 0.13 = 75th percentile of ER(120) on train, with the larger trend-resumption target"},
+  {"strategy": "vwappull", "params": {"er_min": 0.19, "touch_atr": 0.5, "tp_r": 1.5},
+   "reason": "calibration: er_min 0.19 = 90th percentile of ER(120) on train, only the clearest trend days"},
+  {"strategy": "vwappull", "params": {"er_min": 0.19, "touch_atr": 0.5, "tp_r": 2.5},
+   "reason": "calibration: er_min 0.19 = 90th percentile of ER(120) on train, with the larger trend-resumption target"},
+  {"strategy": "roundnum", "params": {"level_step": 50, "exp_mult": 2.5, "tp_r": 2.0, "trend_filter": true},
+   "reason": "trend filter: stop cascades through round levels in the direction of the higher-timeframe trend should run further"}
+]

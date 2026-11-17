@@ -363,6 +363,121 @@ def signals_sweep(b: Bars, p: dict, server_tz: str = "UTC") -> list[Signal]:
     return out
 
 
+def _active(b: Bars, p: dict) -> np.ndarray:
+    mod, _ = local_minutes(b.t, "UTC")
+    return (mod >= p["active_start_utc"]) & (mod < p["active_end_utc"]) & ny_session_mask(b, p)
+
+
+def signals_roundnum(b: Bars, p: dict, server_tz: str = "UTC") -> list[Signal]:
+    """Round-number stop cascade (Osler 2003/2005): stops cluster just beyond round
+    prices, so a forceful close through one tends to keep going.
+
+    A bar that closes beyond the next round level (multiple of level_step) from the
+    previous close, with a bar range of at least exp_mult x ATR, triggers a trade in
+    the crossing direction. Stop sits back on the other side of the level.
+    """
+    a = atr(b, p["atr_n"])
+    L = float(p["level_step"])
+    prev_c = np.r_[np.nan, b.c[:-1]]
+    with np.errstate(invalid="ignore"):
+        up_lvl = (np.floor(prev_c / L) + 1) * L
+        dn_lvl = (np.ceil(prev_c / L) - 1) * L
+    ok = _active(b, p)
+    last: dict[tuple[float, int], int] = {}
+    out: list[Signal] = []
+    for i in np.flatnonzero(ok):
+        av = _prev_atr(a, i)
+        if not np.isfinite(av) or av <= 0 or not np.isfinite(prev_c[i]):
+            continue
+        if b.h[i] - b.l[i] < p["exp_mult"] * av:
+            continue
+        buf = p["buffer_atr"] * av
+        if b.c[i] > up_lvl[i] + buf:
+            side, level = 1, up_lvl[i]
+        elif b.c[i] < dn_lvl[i] - buf:
+            side, level = -1, dn_lvl[i]
+        else:
+            continue
+        key = (float(level), side)
+        if i - last.get(key, -10**9) < p["cooldown_bars"]:
+            continue
+        stop = level - side * p["sl_buf_atr"] * av
+        sl = abs(b.c[i] - stop)
+        if not (0.5 * av <= sl <= p["max_sl_atr"] * av):
+            continue
+        last[key] = int(i)
+        out.append(Signal(int(i), b.close_time(i), side, float(sl), p["tp_r"] * sl,
+                          p["hold_min"], "roundnum", f"{level:.0f}"))
+    return out
+
+
+def signals_impulse(b: Bars, p: dict, server_tz: str = "UTC") -> list[Signal]:
+    """Impulse continuation: an unusually large 1-minute bar that closes near its
+    extreme signals new information that the market takes minutes to absorb.
+
+    Bar range >= k x ATR(atr_n) and close in the outer close_frac of the bar ->
+    trade in that direction. Stop sl_frac x bar range away, target tp_r x stop.
+    """
+    a = atr(b, p["atr_n"])
+    rng = b.h - b.l
+    with np.errstate(invalid="ignore", divide="ignore"):
+        pos = (b.c - b.l) / rng
+    ok = _active(b, p)
+    out: list[Signal] = []
+    last = -10**9
+    for i in np.flatnonzero(ok):
+        av = _prev_atr(a, i)
+        if not np.isfinite(av) or av <= 0 or rng[i] < p["k"] * av or i - last < p["min_gap_bars"]:
+            continue
+        if pos[i] >= 1 - p["close_frac"]:
+            side = 1
+        elif pos[i] <= p["close_frac"]:
+            side = -1
+        else:
+            continue
+        sl = p["sl_frac"] * rng[i]
+        out.append(Signal(int(i), b.close_time(i), side, float(sl), p["tp_r"] * sl,
+                          p["hold_min"], "impulse"))
+        last = i
+    return out
+
+
+def signals_vwappull(b: Bars, p: dict, server_tz: str = "UTC") -> list[Signal]:
+    """VWAP pullback on trending days: VWAP-benchmarked flows defend the session
+    average when the day trends, so a dip to VWAP that bounces is entered with the trend.
+
+    Trend: session VWAP rising over slope_bars and efficiency ratio(er_n) >= er_min.
+    Long: the bar's low reaches within touch_atr x ATR of VWAP, it closes back above
+    VWAP and above its open. Stop below the pullback low, target tp_r x stop.
+    """
+    a = atr(b, p["atr_n"])
+    vwap, _ = session_vwap(b, server_tz)
+    er = efficiency_ratio(b.c, p["er_n"])
+    slope = vwap - np.r_[np.full(p["slope_bars"], np.nan), vwap[:-p["slope_bars"]]]
+    ok = _active(b, p)
+    out: list[Signal] = []
+    last = -10**9
+    for i in np.flatnonzero(ok):
+        av = _prev_atr(a, i)
+        if (not np.isfinite(av) or av <= 0 or not np.isfinite(er[i]) or er[i] < p["er_min"]
+                or not np.isfinite(slope[i]) or i - last < p["min_gap_bars"]):
+            continue
+        touch = p["touch_atr"] * av
+        if slope[i] > 0 and b.l[i] <= vwap[i] + touch and b.c[i] > vwap[i] and b.c[i] > b.o[i]:
+            side, stop = 1, min(b.l[i], vwap[i]) - p["sl_buf_atr"] * av
+        elif slope[i] < 0 and b.h[i] >= vwap[i] - touch and b.c[i] < vwap[i] and b.c[i] < b.o[i]:
+            side, stop = -1, max(b.h[i], vwap[i]) + p["sl_buf_atr"] * av
+        else:
+            continue
+        sl = abs(b.c[i] - stop)
+        if not (0.5 * av <= sl <= p["max_sl_atr"] * av):
+            continue
+        out.append(Signal(int(i), b.close_time(i), side, float(sl), p["tp_r"] * sl,
+                          p["hold_min"], "vwappull"))
+        last = i
+    return out
+
+
 # Defaults, baseline grids (round 1) and the reason for every searched dimension.
 STRATEGIES: dict[str, dict] = {
     "breakout": {
@@ -405,6 +520,48 @@ STRATEGIES: dict[str, dict] = {
             "pierce_atr": "a sweep must run far enough to trigger resting stops",
             "confirm_bars": "how fast the reclaim must happen to count as rejection",
             "tp_r": "trade-off between reversal length and hit rate after costs",
+        },
+    },
+    "roundnum": {
+        "fn": signals_roundnum,
+        "defaults": {"atr_n": 14, "level_step": 50, "exp_mult": 1.5, "buffer_atr": 0.1,
+                     "sl_buf_atr": 0.3, "max_sl_atr": 4.0, "tp_r": 1.5, "hold_min": 15,
+                     "cooldown_bars": 60, "active_start_utc": 420, "active_end_utc": 1200,
+                     "session": "all", "ny_start": "08:00", "ny_end": "16:00", "trail": False,
+                     "trend_filter": False, "trend_n": 240, "trend_slope_bars": 60},
+        "grid": {"level_step": [25, 50], "exp_mult": [1.5, 2.5], "tp_r": [1.0, 2.0]},
+        "reasons": {
+            "level_step": "which round prices hold enough clustered stops to cascade ($25 vs $50 levels)",
+            "exp_mult": "only forceful crossings trigger the stop orders resting beyond the level",
+            "tp_r": "how far a stop cascade carries before it is absorbed",
+        },
+    },
+    "impulse": {
+        "fn": signals_impulse,
+        "defaults": {"atr_n": 60, "k": 2.5, "close_frac": 0.25, "sl_frac": 0.5, "tp_r": 1.5,
+                     "hold_min": 10, "min_gap_bars": 5, "active_start_utc": 420,
+                     "active_end_utc": 1200,
+                     "session": "all", "ny_start": "08:00", "ny_end": "16:00", "trail": False,
+                     "trend_filter": False, "trend_n": 240, "trend_slope_bars": 60},
+        "grid": {"k": [2.0, 3.0], "tp_r": [1.0, 2.0], "hold_min": [10, 20]},
+        "reasons": {
+            "k": "how unusual a bar must be to signal new information rather than noise",
+            "tp_r": "how much of the move is still left after the impulse bar",
+            "hold_min": "how long the market takes to absorb the information",
+        },
+    },
+    "vwappull": {
+        "fn": signals_vwappull,
+        "defaults": {"atr_n": 14, "er_n": 120, "er_min": 0.3, "slope_bars": 60, "touch_atr": 0.25,
+                     "sl_buf_atr": 0.5, "max_sl_atr": 4.0, "tp_r": 1.5, "hold_min": 30,
+                     "min_gap_bars": 30, "active_start_utc": 480, "active_end_utc": 1200,
+                     "session": "all", "ny_start": "08:00", "ny_end": "16:00", "trail": False,
+                     "trend_filter": False, "trend_n": 240, "trend_slope_bars": 60},
+        "grid": {"er_min": [0.3, 0.5], "touch_atr": [0.25, 0.5], "tp_r": [1.5, 2.5]},
+        "reasons": {
+            "er_min": "how clearly the day must trend before VWAP acts as support or resistance",
+            "touch_atr": "how close to VWAP a pullback must come to count as a test",
+            "tp_r": "how far the trend resumes after a successful VWAP test",
         },
     },
 }
