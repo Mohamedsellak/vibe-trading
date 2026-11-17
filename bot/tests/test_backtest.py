@@ -319,3 +319,18 @@ def test_research_backtest_does_not_stop_at_kill_switch():
     full, _ = run(mkt, sigs, cfg)
     stopped, skips = run(mkt, sigs, cfg, kill_switch=True)
     assert len(full) == 2 and len(stopped) == 1 and skips["kill_switch"] == 1
+
+
+
+def test_check_refuses_final_test_overlap(tmp_project, capsys):
+    t, bid, ask = _random_walk_ticks()
+    np.savez(C.DATA_DIR / "XAUUSD_ticks.npz", t=t, bid=bid, ask=ask)
+    (C.DATA_DIR / "XAUUSD_spec.json").write_text(spec().to_json())
+    BT.main(["check", "--symbol", "XAUUSD", "--strategy", "sweep", "--from", "2026-01-05",
+             "--to", "2026-01-20"])
+    assert "positive years" in capsys.readouterr().out
+    assert (C.RESULTS_DIR / "independent_checks.csv").exists()
+    assert not BT.read_log()                              # not counted as a new variant
+    with pytest.raises(SystemExit, match="overlaps the final-test"):
+        BT.main(["check", "--symbol", "XAUUSD", "--strategy", "sweep", "--from", "2026-01-05",
+                 "--to", "2026-12-31"])

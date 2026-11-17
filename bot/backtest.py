@@ -176,14 +176,19 @@ def load_market(cfg: Config, source: str = "ticks") -> Market:
         if not p.exists():
             raise SystemExit(f"No M1 data at {p}. Run `python backtest.py fetch` first.")
         z = np.load(p)
-        t, bid, ask = m1_to_pseudo_ticks({k: z[k] for k in z.files}, spec.point)
+        m1 = {k: z[k] for k in z.files}
+        t, bid, ask = m1_to_pseudo_ticks(m1, spec.point)
         o = np.argsort(t, kind="stable")
         t, bid, ask = t[o], bid[o], ask[o]
+        tick_volume = m1["tick_volume"][np.argsort(m1["t"], kind="stable")]
     else:
         raise SystemExit(f"unknown source {source}")
     if cfg.costs.extra_spread_price:
         ask = np.asarray(ask) + np.asarray(cfg.costs.extra_spread_price, dtype=ask.dtype)
     bars = build_bars(t, bid, ask, cfg.filters.spread_median_bars)
+    if source == "m1" and len(bars) == len(tick_volume):
+        # VWAP weights: use MT5's real tick count per bar, not the 4 pseudo-ticks
+        bars.n = np.maximum(tick_volume.astype("int64"), 1)
     _, bar_day = local_minutes(bars.t, cfg.server_tz)
     return Market(sym, source, spec, t, bid, ask, bars, bar_day)
 
@@ -1039,6 +1044,55 @@ def cmd_final(args, cfg: Config) -> None:
         C.RESULTS_DIR / f"final_trades_{cfg.symbol}_{strategy}.csv", index=False)
 
 
+def _date_ms(text: str) -> int:
+    return int(datetime.strptime(text, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp() * 1000)
+
+
+def cmd_check(args, cfg: Config) -> None:
+    """Run ONE fixed parameter set on a date range the strategy was not developed on.
+
+    Nothing is tuned, so it is not a new variant: results go to
+    results/independent_checks.csv, not the experiment log. Refuses any range
+    that overlaps the tick final-test split, so the final test stays clean.
+    """
+    ev = Evaluator(cfg, load_market(cfg, args.source))
+    strategy = args.strategy
+    params = strategy_params(strategy, json.loads(args.params or "{}"))
+    a, b = _date_ms(args.date_from), _date_ms(args.date_to)
+    fin = None
+    if (ticks_dir(cfg.symbol) / "t.npy").exists():
+        fin = make_splits(load_market(cfg, "ticks"), cfg).final
+        if a < fin[1] and b > fin[0]:
+            raise SystemExit(f"{args.date_from}..{args.date_to} overlaps the final-test split "
+                             f"({fmt_utc(fin[0])[:10]} -> {fmt_utc(fin[1] - 1)[:10]}). Refusing.")
+    m, trades, skips = ev.run(strategy, params, a, b)
+    print(f"\nIndependent check: {_short(strategy, params)} on {ev.mkt.source}, "
+          f"{args.date_from} -> {args.date_to}")
+    print(f"  all years: {fmt_metrics(m)}")
+    print(f"  exits: {dict(Counter(t.exit_reason for t in trades))}   skipped signals: {dict(skips)}")
+    rows = []
+    y0 = datetime.fromtimestamp(a / 1000, tz=timezone.utc).year
+    y1 = datetime.fromtimestamp((b - 1) / 1000, tz=timezone.utc).year
+    for y in range(y0, y1 + 1):
+        ya, yb = max(a, _date_ms(f"{y}-01-01")), min(b, _date_ms(f"{y + 1}-01-01"))
+        my, tr_y, _ = ev.run(strategy, params, ya, yb)
+        print(f"  {y}: {fmt_metrics(my)}")
+        rows.append({"year": y, **{k: my[k] for k in ("trades", "pf", "expectancy_R", "win_rate", "max_dd_pct")}})
+    pos_years = sum(1 for r in rows if r["trades"] and r["expectancy_R"] > 0)
+    print(f"  positive years: {pos_years} of {sum(1 for r in rows if r['trades'])}")
+    out = C.RESULTS_DIR / "independent_checks.csv"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    new = not out.exists()
+    with out.open("a", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        if new:
+            w.writerow(["ts", "symbol", "source", "strategy", "params", "from", "to", *METRIC_KEYS,
+                        "positive_years", "years"])
+        w.writerow([datetime.now(timezone.utc).isoformat(timespec="seconds"), cfg.symbol,
+                    ev.mkt.source, strategy, params_key(params), args.date_from, args.date_to,
+                    *[m[k] for k in METRIC_KEYS], pos_years, len(rows)])
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -1066,6 +1120,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--folds", type=int, default=5)
     p = common(sub.add_parser("run-all"))
     p.add_argument("--folds", type=int, default=5)
+    p = common(sub.add_parser("check"))
+    p.add_argument("--strategy", required=True, choices=list(STRATEGIES))
+    p.add_argument("--params", default="{}")
+    p.add_argument("--from", dest="date_from", required=True, help="YYYY-MM-DD (UTC)")
+    p.add_argument("--to", dest="date_to", required=True, help="YYYY-MM-DD (UTC, exclusive)")
     p = common(sub.add_parser("final"))
     p.add_argument("--strategy", required=True, choices=list(STRATEGIES))
     p.add_argument("--params", default="{}")
@@ -1079,7 +1138,7 @@ def main(argv=None) -> None:
     cfg = load_config(symbol=args.symbol)
     {"fetch": cmd_fetch, "import-csv": cmd_import_csv, "info": cmd_info, "dev": cmd_dev,
      "select": cmd_select, "walkforward": cmd_walkforward, "run-all": cmd_run_all,
-     "final": cmd_final}[args.cmd](args, cfg)
+     "final": cmd_final, "check": cmd_check}[args.cmd](args, cfg)
 
 
 if __name__ == "__main__":

@@ -46,6 +46,7 @@ def make_bot(tmp_project, monkeypatch):
 
 def test_entry_logs_signal_order_and_position(tmp_project, monkeypatch):
     bot, mt5 = make_bot(tmp_project, monkeypatch)
+    monkeypatch.setattr(bot.filters, "check", lambda *a: None)   # independent of wall-clock time
     boundary = (B.now_ms() // MINUTE_MS) * MINUTE_MS
     monkeypatch.setattr(B, "generate", lambda name, bars, p, tz: [
         Signal(len(bars) - 1, boundary, 1, 2.0, 3.0, 45, "sweep", "asia_low")])
