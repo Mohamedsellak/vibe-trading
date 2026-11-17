@@ -1,9 +1,7 @@
 # secrets
 .env
-# large tick data (GBs) - keep the small spec / report files
-data/*_ticks/
-data/*_parts/
-data/*.npz
+# market data is per machine and per broker: never commit it
+data/
 # runtime logs and caches
 logs/
 __pycache__/

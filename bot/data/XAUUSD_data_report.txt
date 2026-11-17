@@ -1,9 +1,0 @@
-Symbol XAUUSD (broker name XAUUSD), source=ticks, spec from mt5
-Ticks: 159,277,685 from 2025-05-27 10:36:28 to 2026-11-17 17:29:16 UTC
-M1 bars built: 513,757   trading days: 383   median ticks/day: 447,402   days < 1,000 ticks: 0
-Gaps > 4h outside weekends: 2026-04-02 22:59:59 +74.0h
-  train      2025-05-27 -> 2026-02-23  192 trading days
-  validation 2026-02-23 -> 2026-07-07  95 trading days
-  final      2026-07-07 -> 2026-11-17  96 trading days
-300-trade gate: the final split has 96 trading days, so a strategy must average >= 3.12 trades/day to reach 300 trades.
-Spread (points): median 17.0, p90 36.0
