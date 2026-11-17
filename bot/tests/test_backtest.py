@@ -273,3 +273,25 @@ def test_m1_source_loads_and_reports(tmp_project, capsys):
     BT.main(["info", "--symbol", "XAUUSD", "--source", "m1"])
     out = capsys.readouterr().out
     assert "source=m1" in out and "Pseudo-ticks" in out and "trading days: 15" in out
+
+
+def test_tick_storage_is_memory_mapped_and_parts_merge(tmp_project):
+    # three monthly parts with an overlapping border tick, written oldest-first
+    parts = []
+    for i, (a, b) in enumerate([(0, 10), (9, 20), (20, 25)]):
+        t = np.arange(a, b, dtype="int64") * 1000
+        f = C.DATA_DIR / f"p{i}.npz"
+        np.savez(f, t=t, bid=2000.0 + t / 1e6, ask=2000.2 + t / 1e6)
+        parts.append(f)
+    n = BT.merge_parts("XAUUSD", parts)
+    t, bid, ask = BT.open_ticks("XAUUSD")
+    assert n == 25 and len(t) == 25 and list(t[:3]) == [0, 1000, 2000]
+    assert np.all(np.diff(np.asarray(t)) > 0)                 # border duplicates removed
+    assert isinstance(t, np.memmap) and bid.dtype == np.float32   # gold stored as float32
+    assert BT.is_sorted(t)
+
+
+def test_btc_prices_keep_float64(tmp_project):
+    BT.save_ticks("BTCUSD", np.arange(5, dtype="int64"), np.full(5, 95_000.25), np.full(5, 95_010.5))
+    _, bid, _ = BT.open_ticks("BTCUSD")
+    assert bid.dtype == np.float64 and bid[0] == 95_000.25

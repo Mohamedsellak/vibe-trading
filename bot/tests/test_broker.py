@@ -111,3 +111,27 @@ def test_disconnected_terminal_reconnects():
     mt5.terminal_info = flaky
     br.ensure_connected()
     assert calls["n"] >= 2
+
+
+def test_fetch_stops_when_server_clock_does_not_match(tmp_project):
+    import time as _t
+    import backtest as BT
+    mt5 = FakeMT5()
+    mt5.tick_ms = int(_t.time() * 1000) + 3 * 3_600_000     # a UTC+3 server, e.g. MetaQuotes-Demo
+    cfg = load_config(symbol="XAUUSD")                        # SERVER_TZ=UTC (Exness)
+    br = MT5Broker(cfg, mt5_module=mt5, sleep=lambda s: None)
+    with pytest.raises(SystemExit, match="UTC\\+3.0h"):
+        BT.cmd_fetch(SimpleNamespace(max_months=1), cfg, broker=br)
+    assert not (BT.ticks_dir("XAUUSD") / "t.npy").exists()   # nothing was saved
+
+
+def test_clock_check_passes_for_utc_server(tmp_project, capsys):
+    import time as _t
+    import backtest as BT
+    mt5 = FakeMT5()
+    mt5.tick_ms = int(_t.time() * 1000)
+    cfg = load_config(symbol="XAUUSD")
+    br = MT5Broker(cfg, mt5_module=mt5, sleep=lambda s: None)
+    br.connect(); br.resolve_symbol("XAUUSD")
+    BT.check_server_clock(br, cfg)
+    assert "server clock OK" in capsys.readouterr().out

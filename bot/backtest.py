@@ -49,8 +49,69 @@ FINAL_MIN_PF = 1.3
 # ==========================================================================
 # Data
 # ==========================================================================
-def tick_file(symbol: str) -> Path:
+def ticks_dir(symbol: str) -> Path:
+    """Ticks are stored as t.npy / bid.npy / ask.npy and memory-mapped, so 100M+
+    ticks are read from disk on demand instead of being loaded into RAM."""
+    return C.DATA_DIR / f"{symbol}_ticks"
+
+
+def legacy_tick_file(symbol: str) -> Path:
     return C.DATA_DIR / f"{symbol}_ticks.npz"
+
+
+def price_dtype(sample_max: float):
+    """float32 is exact enough for gold (spacing ~0.0005 at 5,000); BTC needs float64."""
+    return np.float64 if sample_max > 20_000 else np.float32
+
+
+def save_ticks(symbol: str, t, bid, ask) -> Path:
+    d = ticks_dir(symbol)
+    d.mkdir(parents=True, exist_ok=True)
+    dt = price_dtype(float(np.max(bid[:: max(1, len(bid) // 1000)])) if len(bid) else 0.0)
+    np.save(d / "t.npy", np.asarray(t, dtype="int64"))
+    np.save(d / "bid.npy", np.asarray(bid, dtype=dt))
+    np.save(d / "ask.npy", np.asarray(ask, dtype=dt))
+    return d
+
+
+def migrate_legacy(symbol: str) -> None:
+    """Convert an old single-file .npz to the memory-mapped layout, one array at a time."""
+    src = legacy_tick_file(symbol)
+    print(f"converting {src.name} to the memory-mapped format (one time)...")
+    d = ticks_dir(symbol)
+    d.mkdir(parents=True, exist_ok=True)
+    z = np.load(src)
+    arr = z["t"]
+    np.save(d / "t.npy", arr.astype("int64", copy=False))
+    del arr
+    dt = None
+    for name in ("bid", "ask"):
+        arr = z[name]
+        if dt is None:
+            dt = price_dtype(float(np.max(arr[:: max(1, len(arr) // 1000)])))
+        np.save(d / f"{name}.npy", arr.astype(dt))
+        del arr
+    z.close()
+    print(f"done. You can delete {src} to free disk space.")
+
+
+def open_ticks(symbol: str):
+    d = ticks_dir(symbol)
+    if not (d / "t.npy").exists() and legacy_tick_file(symbol).exists():
+        migrate_legacy(symbol)
+    if not (d / "t.npy").exists():
+        return None
+    return tuple(np.load(d / f"{n}.npy", mmap_mode="r") for n in ("t", "bid", "ask"))
+
+
+def is_sorted(t, chunk: int = 10_000_000) -> bool:
+    prev = None
+    for a in range(0, len(t), chunk):
+        c = np.asarray(t[a:a + chunk])
+        if (prev is not None and c[0] < prev) or (len(c) > 1 and np.any(c[1:] < c[:-1])):
+            return False
+        prev = c[-1]
+    return True
 
 
 def m1_file(symbol: str) -> Path:
@@ -102,24 +163,25 @@ def load_market(cfg: Config, source: str = "ticks") -> Market:
     sym = cfg.symbol
     spec = load_spec(sym)
     if source == "ticks":
-        p = tick_file(sym)
-        if not p.exists():
-            raise SystemExit(f"No tick data at {p}. Run `python backtest.py fetch --symbol {sym}` "
-                             "on the Windows/MT5 machine, or `import-csv`.")
-        z = np.load(p)
-        t, bid, ask = z["t"].astype("int64"), z["bid"].astype(float), z["ask"].astype(float)
+        arrs = open_ticks(sym)
+        if arrs is None:
+            raise SystemExit(f"No tick data in {ticks_dir(sym)}. Run `python backtest.py fetch "
+                             f"--symbol {sym}` on the Windows/MT5 machine, or `import-csv`.")
+        t, bid, ask = arrs
+        if not is_sorted(t):
+            raise SystemExit(f"ticks in {ticks_dir(sym)} are not in time order; re-run fetch")
     elif source == "m1":
         p = m1_file(sym)
         if not p.exists():
             raise SystemExit(f"No M1 data at {p}. Run `python backtest.py fetch` first.")
         z = np.load(p)
         t, bid, ask = m1_to_pseudo_ticks({k: z[k] for k in z.files}, spec.point)
+        o = np.argsort(t, kind="stable")
+        t, bid, ask = t[o], bid[o], ask[o]
     else:
         raise SystemExit(f"unknown source {source}")
-    order = np.argsort(t, kind="stable")
-    t, bid, ask = t[order], bid[order], ask[order]
     if cfg.costs.extra_spread_price:
-        ask = ask + cfg.costs.extra_spread_price
+        ask = np.asarray(ask) + np.asarray(cfg.costs.extra_spread_price, dtype=ask.dtype)
     bars = build_bars(t, bid, ask, cfg.filters.spread_median_bars)
     _, bar_day = local_minutes(bars.t, cfg.server_tz)
     return Market(sym, source, spec, t, bid, ask, bars, bar_day)
@@ -168,17 +230,15 @@ def data_report(mkt: Market, cfg: Config, m1: dict | None = None) -> str:
     lines.append(f"M1 bars built: {len(mkt.bars):,}   trading days: {len(tick_days)}   "
                  f"median ticks/day: {int(per_day.median()):,}   days < 1,000 ticks: "
                  f"{int((per_day < 1000).sum())}")
-    gaps = np.diff(t)
-    big = np.argsort(gaps)[::-1][:50]
     odd = []
-    for j in big:
-        g = gaps[j] / 3_600_000
-        start = datetime.fromtimestamp(t[j] / 1000, tz=timezone.utc)
-        if g < 4:
-            break
-        weekend = start.weekday() >= 4 and g < 60
-        if not weekend:
-            odd.append(f"{fmt_utc(int(t[j]))} +{g:.1f}h")
+    chunk = 10_000_000
+    for a in range(0, len(t) - 1, chunk):
+        c = np.asarray(t[a:a + chunk + 1])
+        for j in np.flatnonzero(np.diff(c) > 4 * 3_600_000):
+            g = (c[j + 1] - c[j]) / 3_600_000
+            start = datetime.fromtimestamp(c[j] / 1000, tz=timezone.utc)
+            if not (start.weekday() >= 4 and g < 60):
+                odd.append(f"{fmt_utc(int(c[j]))} +{g:.1f}h")
     lines.append("Gaps > 4h outside weekends: " + (", ".join(odd[:8]) if odd else "none"))
     if m1 is not None and len(m1["t"]):
         lines.append(f"MT5 M1 rates: {len(m1['t']):,} bars from {fmt_utc(int(m1['t'][0]))} "
@@ -191,7 +251,8 @@ def data_report(mkt: Market, cfg: Config, m1: dict | None = None) -> str:
     nf = sp.n_days["final"]
     lines.append(f"300-trade gate: the final split has {nf} trading days, so a strategy must "
                  f"average >= {FINAL_MIN_TRADES / max(nf, 1):.2f} trades/day to reach 300 trades.")
-    spreads = (mkt.ask - mkt.bid) / mkt.spec.point
+    step = max(1, len(mkt.t) // 2_000_000)               # sample: no full-size temporary
+    spreads = (np.asarray(mkt.ask[::step], dtype=float) - np.asarray(mkt.bid[::step], dtype=float)) / mkt.spec.point
     lines.append(f"Spread (points): median {np.median(spreads):.1f}, p90 {np.percentile(spreads, 90):.1f}")
     return "\n".join(lines)
 
@@ -264,7 +325,7 @@ def simulate(mkt: Market, signals: list[Signal], cfg: Config, filters: TradeFilt
             continue
         side = s.side
         spread_e = float(ask[e] - bid[e])
-        entry = float(ask[e] + slip) if side > 0 else float(bid[e] - slip)
+        entry = float(ask[e]) + slip if side > 0 else float(bid[e]) - slip
         sl_d, tp_d = apply_min_stop(s.sl_dist, s.tp_dist, spec.stops_level, spec.point, spread_e)
         lots = lot_size(equity, cfg.risk.risk_per_trade_pct, sl_d, spec, comm)
         if lots <= 0:
@@ -588,49 +649,58 @@ def cmd_fetch(args, cfg: Config) -> None:
     print(f"spec saved: {spec}")
     now = int(time.time() * 1000) + DAY_MS
     month = 31 * DAY_MS
-    ts, bs, as_ = [], [], []
-    empty_run, end = 0, now
-    for i in range(args.max_months):
+    parts_dir = C.DATA_DIR / f"{cfg.symbol}_parts"
+    parts_dir.mkdir(parents=True, exist_ok=True)
+    parts, empty_run, end = [], 0, now
+    for i in range(args.max_months):       # newest month first, one month in RAM at a time
         start = end - month
         t, bid, ask = br.ticks_range(start, end)
         print(f"  ticks {fmt_utc(start)[:10]} -> {fmt_utc(end)[:10]}: {len(t):,}"
               + ("" if len(t) else f"  (last_error={br.last_error()})"))
         if len(t):
-            ts.append(t); bs.append(bid); as_.append(ask)
+            f = parts_dir / f"{i:03d}.npz"
+            np.savez(f, t=t, bid=bid, ask=ask)
+            parts.append(f)
             empty_run = 0
         else:
             empty_run += 1
             if empty_run >= 3:
                 break
         end = start
-    if ts:
-        t = np.concatenate(ts[::-1]); bid = np.concatenate(bs[::-1]); ask = np.concatenate(as_[::-1])
-        o = np.argsort(t, kind="stable")
-        t, bid, ask = t[o], bid[o], ask[o]
-        np.savez(tick_file(cfg.symbol), t=t, bid=bid, ask=ask)
-        print(f"saved {len(t):,} ticks to {tick_file(cfg.symbol)}")
+    del t, bid, ask
+    if parts:
+        n_ticks = merge_parts(cfg.symbol, parts[::-1])
+        print(f"saved {n_ticks:,} ticks to {ticks_dir(cfg.symbol)}")
     else:
         print("MT5 returned NO ticks. Open the symbol chart in MT5, scroll back, and retry.")
-    parts = []
-    end = now
-    for _ in range(max(1, args.max_months // 12 + 1)):
-        start = end - 366 * DAY_MS
+    for f in parts:
+        f.unlink()
+    parts_dir.rmdir()
+    if legacy_tick_file(cfg.symbol).exists() and parts:
+        legacy_tick_file(cfg.symbol).unlink()        # replaced by the new layout
+    rates, end = [], now
+    for _ in range(args.max_months):
+        start = end - month
         r = br.rates_range_m1(start, end)
         if r is None:
-            break
-        parts.append(r)
+            if rates:
+                break
+        else:
+            rates.append(r)
         end = start
+        if not rates and end < now - 3 * month:
+            break
     m1 = None
-    if parts:
-        m1 = {k: np.concatenate([p[k] for p in parts[::-1]]) for k in parts[0]}
-        o = np.argsort(m1["t"], kind="stable")
-        m1 = {k: v[o] for k, v in m1.items()}
+    if rates:
+        m1 = {k: np.concatenate([p[k] for p in rates[::-1]]) for k in rates[0]}
         _, uniq = np.unique(m1["t"], return_index=True)
         m1 = {k: v[uniq] for k, v in m1.items()}
         np.savez(m1_file(cfg.symbol), **m1)
         print(f"saved {len(m1['t']):,} M1 bars to {m1_file(cfg.symbol)}")
+    else:
+        print(f"MT5 returned no M1 bars ({br.last_error()}); ticks are enough for the backtest.")
     br.shutdown()
-    if ts:
+    if parts:
         rep = data_report(load_market(cfg, "ticks"), cfg, m1)
     elif m1 is not None:
         rep = data_report(load_market(cfg, "m1"), cfg, m1)
@@ -638,6 +708,41 @@ def cmd_fetch(args, cfg: Config) -> None:
         rep = "No data returned by MT5."
     (C.DATA_DIR / f"{cfg.symbol}_data_report.txt").write_text(rep, encoding="utf-8")
     print("\n=== DATA REPORT ===\n" + rep)
+
+
+def merge_parts(symbol: str, parts: list[Path]) -> int:
+    """Concatenate monthly part files (oldest first) into memory-mapped .npy files,
+    dropping ticks at month borders that were already written."""
+    counts, last = [], -2**62
+    for f in parts:
+        with np.load(f) as z:
+            t = z["t"]
+            counts.append(int(np.count_nonzero(t > last)) if len(t) and t[0] <= last else len(t))
+            last = max(last, int(t[-1])) if len(t) else last
+    total = sum(counts)
+    with np.load(parts[-1]) as z:
+        dt = price_dtype(float(np.max(z["bid"][:: max(1, len(z["bid"]) // 1000)])))
+    d = ticks_dir(symbol)
+    d.mkdir(parents=True, exist_ok=True)
+    out = {n: np.lib.format.open_memmap(d / f"{n}.npy", mode="w+",
+                                        dtype=("int64" if n == "t" else dt), shape=(total,))
+           for n in ("t", "bid", "ask")}
+    pos, last = 0, -2**62
+    for f in parts:
+        with np.load(f) as z:
+            t = z["t"]
+            keep = t > last
+            k = int(keep.sum())
+            out["t"][pos:pos + k] = t[keep]
+            out["bid"][pos:pos + k] = z["bid"][keep]
+            out["ask"][pos:pos + k] = z["ask"][keep]
+            if k:
+                last = int(t[keep][-1])
+            pos += k
+    for a in out.values():
+        a.flush()
+    del out
+    return pos
 
 
 def cmd_import_csv(args, cfg: Config) -> None:
@@ -660,12 +765,12 @@ def cmd_import_csv(args, cfg: Config) -> None:
     bid = pd.to_numeric(df[cols["bid"]], errors="coerce").replace(0, np.nan).ffill()
     ask = pd.to_numeric(df[cols["ask"]], errors="coerce").replace(0, np.nan).ffill()
     ok = ts.notna() & bid.notna() & ask.notna()
-    local_ms = (ts[ok].astype("int64") // 1_000_000).to_numpy()
+    local_ms = ts[ok].dt.as_unit("ms").astype("int64").to_numpy()
     t = server_to_utc_ms(local_ms, tz)
     o = np.argsort(t, kind="stable")
     C.DATA_DIR.mkdir(parents=True, exist_ok=True)
-    np.savez(tick_file(cfg.symbol), t=t[o], bid=bid[ok].to_numpy()[o], ask=ask[ok].to_numpy()[o])
-    print(f"imported {ok.sum():,} ticks (times read as {tz}) -> {tick_file(cfg.symbol)}")
+    d = save_ticks(cfg.symbol, t[o], bid[ok].to_numpy()[o], ask[ok].to_numpy()[o])
+    print(f"imported {ok.sum():,} ticks (times read as {tz}) -> {d}")
     print(data_report(load_market(cfg, "ticks"), cfg))
 
 

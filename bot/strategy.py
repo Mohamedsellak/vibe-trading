@@ -41,7 +41,7 @@ def server_to_utc_ms(ms, server_tz: str) -> np.ndarray:
     idx = pd.to_datetime(arr, unit="ms")
     loc = idx.tz_localize(server_tz, ambiguous=np.zeros(len(idx), dtype=bool),
                           nonexistent="shift_forward")
-    return (loc.tz_convert("UTC").asi8 // 1_000_000).astype("int64")
+    return loc.tz_convert("UTC").as_unit("ms").asi8.astype("int64")
 
 
 def utc_to_server_ms(ms, server_tz: str) -> np.ndarray:
@@ -49,7 +49,7 @@ def utc_to_server_ms(ms, server_tz: str) -> np.ndarray:
     if _is_utc(server_tz):
         return arr
     idx = pd.to_datetime(arr, unit="ms", utc=True).tz_convert(server_tz).tz_localize(None)
-    return (idx.asi8 // 1_000_000).astype("int64")
+    return idx.as_unit("ms").asi8.astype("int64")
 
 
 def local_minutes(t_ms, tz: str) -> tuple[np.ndarray, np.ndarray]:
@@ -90,22 +90,36 @@ class Bars:
 
 
 def build_bars(t_ms: np.ndarray, bid: np.ndarray, ask: np.ndarray,
-               spread_median_bars: int = 60) -> Bars:
-    """1-minute bid bars from ticks. Minutes without ticks produce no bar."""
-    if len(t_ms) == 0:
+               spread_median_bars: int = 60, chunk: int = 5_000_000) -> Bars:
+    """1-minute bid bars from ticks. Minutes without ticks produce no bar.
+
+    Works in chunks, so 100M+ ticks (memory-mapped from disk) never need a
+    full-size temporary array.
+    """
+    n = len(t_ms)
+    if n == 0:
         empty = np.array([], dtype=float)
         return Bars(np.array([], dtype="int64"), empty, empty, empty, empty, empty, empty,
                     np.array([], dtype="int64"), np.array([], dtype="int64"))
-    key = t_ms // MINUTE_MS
-    starts = np.r_[0, np.flatnonzero(np.diff(key)) + 1]
-    ends = np.r_[starts[1:], len(t_ms)] - 1
-    spr = ask - bid
-    n = ends - starts + 1
-    spread = np.add.reduceat(spr, starts) / n
-    ref = pd.Series(spread).rolling(spread_median_bars, min_periods=5).median().to_numpy()
-    return Bars(t=key[starts] * MINUTE_MS, o=bid[starts], h=np.maximum.reduceat(bid, starts),
-                l=np.minimum.reduceat(bid, starts), c=bid[ends], spread=spread,
-                spread_ref=ref, n=n.astype("int64"), last_tick=ends.astype("int64"))
+    parts, prev = [], None
+    for a in range(0, n, chunk):
+        k = np.asarray(t_ms[a:a + chunk]) // MINUTE_MS
+        if prev is None or k[0] != prev:
+            parts.append(np.array([a], dtype="int64"))
+        parts.append(np.flatnonzero(k[1:] != k[:-1]).astype("int64") + 1 + a)
+        prev = k[-1]
+    starts = np.concatenate(parts)
+    ends = np.r_[starts[1:], n] - 1
+    cnt = (ends - starts + 1).astype("int64")
+    spread = (np.add.reduceat(ask, starts, dtype=np.float64)
+              - np.add.reduceat(bid, starts, dtype=np.float64)) / cnt
+    ref = pd.Series(spread).rolling(spread_median_bars, min_periods=5).median().to_numpy(copy=True)
+    return Bars(t=(np.asarray(t_ms[starts], dtype="int64") // MINUTE_MS) * MINUTE_MS,
+                o=np.array(bid[starts], dtype=float),
+                h=np.array(np.maximum.reduceat(bid, starts), dtype=float),
+                l=np.array(np.minimum.reduceat(bid, starts), dtype=float),
+                c=np.array(bid[ends], dtype=float), spread=spread, spread_ref=ref,
+                n=cnt, last_tick=ends.astype("int64"))
 
 
 # --------------------------------------------------------------------------

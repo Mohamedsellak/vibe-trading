@@ -1,0 +1,15 @@
+{
+  "name": "XAUUSD",
+  "point": 0.01,
+  "digits": 2,
+  "tick_size": 0.01,
+  "tick_value": 0.1,
+  "contract_size": 100.0,
+  "volume_min": 0.01,
+  "volume_max": 100.0,
+  "volume_step": 0.01,
+  "stops_level": 0,
+  "freeze_level": 0,
+  "filling_mode": 3,
+  "source": "mt5"
+}
