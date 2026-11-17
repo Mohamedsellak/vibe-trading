@@ -21,6 +21,21 @@ def make_bars(t0_ms, o, h, l, c, spread=0.1, n=10):
                 n=np.full(k, n, dtype="int64"), last_tick=np.arange(k, dtype="int64"))
 
 
+ENV_PREFIXES = ("COMMISSION_", "SLIPPAGE_", "SERVER_TZ", "SYMBOL", "MT5_", "RISK_", "MAX_",
+                "TRAIL_", "SPREAD_", "LATENCY_MS", "EXTRA_SPREAD_PRICE", "COOLDOWN_", "MAGIC",
+                "DEVIATION_POINTS", "LOOP_INTERVAL_MS", "STARTING_EQUITY")
+
+
+@pytest.fixture(autouse=True)
+def isolate_from_user_env(tmp_path, monkeypatch):
+    """Tests must never read the developer's real bot/.env or its exported values."""
+    import os
+    monkeypatch.setattr(C, "ENV_FILE", tmp_path / "no.env")
+    for key in list(os.environ):
+        if key.startswith(ENV_PREFIXES):
+            monkeypatch.delenv(key, raising=False)
+
+
 @pytest.fixture
 def tmp_project(tmp_path, monkeypatch):
     """Redirect every data/result path of the project into a temp folder."""

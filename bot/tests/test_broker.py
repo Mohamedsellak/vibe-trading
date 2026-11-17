@@ -120,8 +120,9 @@ def test_fetch_stops_when_server_clock_does_not_match(tmp_project):
     mt5.tick_ms = int(_t.time() * 1000) + 3 * 3_600_000     # a UTC+3 server, e.g. MetaQuotes-Demo
     cfg = load_config(symbol="XAUUSD")                        # SERVER_TZ=UTC (Exness)
     br = MT5Broker(cfg, mt5_module=mt5, sleep=lambda s: None)
-    with pytest.raises(SystemExit, match="UTC\\+3.0h"):
+    with pytest.raises(SystemExit, match="UTC\\+3.0h") as err:
         BT.cmd_fetch(SimpleNamespace(max_months=1), cfg, broker=br)
+    assert "PC clock" in str(err.value) and "time.is" in str(err.value)
     assert not (BT.ticks_dir("XAUUSD") / "t.npy").exists()   # nothing was saved
 
 

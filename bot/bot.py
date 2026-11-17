@@ -238,7 +238,9 @@ class Bot:
         want = expected_offset_minutes(self.cfg.server_tz, now_ms())
         if abs(seen - want) > 1:
             raise SystemExit(f"Server time offset is {seen:+.0f} min but SERVER_TZ={self.cfg.server_tz} "
-                             f"implies {want:+.0f} min. Fix SERVER_TZ in .env before trading.")
+                             f"implies {want:+.0f} min. Either your PC clock is wrong (turn on "
+                             "'Set time automatically' in Windows and compare with "
+                             "https://time.is/UTC) or SERVER_TZ in .env does not match the broker.")
         self.offset_verified = True
         self.db.event("clock", f"server offset verified: {seen:+.0f} min")
 

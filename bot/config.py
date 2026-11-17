@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -20,6 +21,27 @@ CHOSEN_FILE = RESULTS_DIR / "chosen_strategy.json"
 EXPERIMENTS_FILE = RESULTS_DIR / "experiments.csv"
 FINAL_TEST_LOG = RESULTS_DIR / "final_test_log.json"
 TRADE_DB = LOG_DIR / "bot.sqlite"
+
+
+def normalize_tz(name: str) -> str:
+    """Accept UTC, GMT, fixed offsets like UTC+2 / GMT-5, or IANA names like Europe/Athens."""
+    text = (name or "").strip()
+    m = re.fullmatch(r"(?i)(UTC|GMT)\s*([+-])\s*(\d{1,2})", text)
+    if m:
+        hours = int(m.group(3))
+        if hours == 0:
+            return "UTC"
+        # IANA fixed-offset zones have inverted signs: Etc/GMT-2 is UTC+2.
+        return f"Etc/GMT{'-' if m.group(2) == '+' else '+'}{hours}"
+    if text.upper() in ("UTC", "GMT", "Z", "ETC/UTC", "ETC/GMT"):
+        return "UTC"
+    from zoneinfo import ZoneInfo
+    try:
+        ZoneInfo(text)
+    except Exception:
+        raise SystemExit(f"SERVER_TZ={name!r} is not a time zone. Use UTC, a fixed offset such "
+                         "as UTC+2, or a name such as Europe/Athens.") from None
+    return text
 
 
 def load_env(path: Path = ENV_FILE) -> dict:
@@ -207,17 +229,11 @@ class Config:
         return defaults_for(self.symbol)
 
     def commission(self) -> float:
-        env_key = f"COMMISSION_{self.symbol.upper()}"
-        if os.environ.get(env_key):
-            return float(os.environ[env_key])
         if self.costs.commission_per_lot_side is not None:
             return self.costs.commission_per_lot_side
         return self.symbol_defaults().commission_per_lot_side
 
     def slippage(self) -> float:
-        env_key = f"SLIPPAGE_{self.symbol.upper()}"
-        if os.environ.get(env_key):
-            return float(os.environ[env_key])
         if self.costs.slippage_price is not None:
             return self.costs.slippage_price
         return self.symbol_defaults().slippage_price
@@ -227,7 +243,7 @@ def load_config(env_path: Path | None = None, symbol: str | None = None) -> Conf
     load_env(env_path or ENV_FILE)
     cfg = Config()
     cfg.symbol = (symbol or _env("SYMBOL", cfg.symbol)).upper()
-    cfg.server_tz = _env("SERVER_TZ", cfg.server_tz)
+    cfg.server_tz = normalize_tz(_env("SERVER_TZ", cfg.server_tz))
     login = _env("MT5_LOGIN", None)
     cfg.mt5_login = int(login) if login else None
     cfg.mt5_password = _env("MT5_PASSWORD", None)
@@ -236,6 +252,9 @@ def load_config(env_path: Path | None = None, symbol: str | None = None) -> Conf
     cfg.starting_equity = _env("STARTING_EQUITY", cfg.starting_equity, float)
 
     c = cfg.costs
+    # per-symbol costs, read once here so code that sets cfg.costs later is never overridden
+    c.commission_per_lot_side = _env(f"COMMISSION_{cfg.symbol}", c.commission_per_lot_side, float)
+    c.slippage_price = _env(f"SLIPPAGE_{cfg.symbol}", c.slippage_price, float)
     c.extra_spread_price = _env("EXTRA_SPREAD_PRICE", c.extra_spread_price, float)
     c.latency_ms = _env("LATENCY_MS", c.latency_ms, int)
 

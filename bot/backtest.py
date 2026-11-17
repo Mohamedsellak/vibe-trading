@@ -661,11 +661,20 @@ def check_server_clock(br, cfg: Config) -> None:
               f"checked. Make sure SERVER_TZ={cfg.server_tz} matches your broker.")
         return
     if abs(seen - want) > 1:
+        tick = br.mt5.symbol_info_tick(br.symbol)
+        broker_wall = fmt_utc(int(tick.time_msc)) if tick is not None else "unknown"
         raise SystemExit(
-            f"Server clock is {_fmt_offset(seen)} but SERVER_TZ={cfg.server_tz} means "
-            f"{_fmt_offset(want)}. Nothing was saved. Set SERVER_TZ in .env to match the "
-            "server (Exness = UTC; many brokers and MetaQuotes-Demo use Europe/Athens, "
-            "i.e. UTC+2 in winter and UTC+3 in summer), then fetch again.")
+            f"Server clock looks like {_fmt_offset(seen)}, but SERVER_TZ={cfg.server_tz} means "
+            f"{_fmt_offset(want)}. Nothing was saved.\n"
+            f"  broker time (last tick): {broker_wall}\n"
+            f"  your PC clock, in UTC:   {fmt_utc(now)}\n"
+            "Two possible causes:\n"
+            "  1. Your PC clock is wrong. Compare it with https://time.is/UTC. In Windows, turn on\n"
+            "     Settings > Time & language > Date & time > 'Set time automatically' and\n"
+            "     'Set time zone automatically', then click 'Sync now'. Exness servers run on\n"
+            "     UTC, so with Exness this is the usual cause.\n"
+            "  2. SERVER_TZ does not match the broker. Set it in .env: UTC, a fixed offset such\n"
+            "     as UTC+2, or Europe/Athens for brokers on UTC+2 in winter and UTC+3 in summer.")
     print(f"server clock OK ({_fmt_offset(seen)}, SERVER_TZ={cfg.server_tz})")
 
 

@@ -207,3 +207,26 @@ def test_ny_only_meanrev_and_sweep_use_new_york_hours():
         sigs = generate("sweep", make_bars(t0, o, h, l, c),
                         {"pierce_atr": 0.1, "confirm_bars": 1, "session": "newyork"}, "UTC")
         assert len(sigs) == expected
+
+
+def test_server_tz_accepts_offsets_and_rejects_garbage():
+    import pytest
+    from config import normalize_tz
+    assert normalize_tz("UTC") == "UTC" and normalize_tz("gmt") == "UTC"
+    assert normalize_tz("UTC+2") == "Etc/GMT-2" and normalize_tz("GMT-5") == "Etc/GMT+5"
+    assert normalize_tz("UTC+0") == "UTC" and normalize_tz("Europe/Athens") == "Europe/Athens"
+    utc = np.array([ms(2026, 7, 1, 12)])
+    assert (utc_to_server_ms(utc, normalize_tz("UTC+2")) - utc)[0] == 2 * 3_600_000
+    with pytest.raises(SystemExit):
+        normalize_tz("UTC plus two")
+
+
+
+def test_symbol_costs_come_from_env_but_code_can_override(tmp_path, monkeypatch):
+    import config as C
+    env = tmp_path / ".env"
+    env.write_text("COMMISSION_XAUUSD=0\nSLIPPAGE_XAUUSD=0.07\n")
+    cfg = C.load_config(env_path=env, symbol="XAUUSD")
+    assert cfg.commission() == 0.0 and cfg.slippage() == 0.07
+    cfg.costs.commission_per_lot_side = 3.0          # a later explicit setting wins
+    assert cfg.commission() == 3.0
