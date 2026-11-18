@@ -1,0 +1,9 @@
+# News blackout list. No NEW trades from minutes_before until minutes_after (open trades are still managed).
+# utc_time  : event time in UTC, format YYYY-MM-DD HH:MM
+# currency  : USD, EUR, XAU, BTC ... (matches a symbol's base or profit currency) or ALL
+# The rows below are EXAMPLES. Check each date and time in a real economic calendar and add your own.
+utc_time,currency,minutes_before,minutes_after,event
+2026-12-04 13:30,USD,15,30,US Non-Farm Payrolls (example - check date)
+2026-12-09 19:00,USD,15,45,FOMC rate decision (example - check date)
+2026-12-10 13:30,USD,15,30,US CPI (example - check date)
+2026-12-17 13:15,EUR,15,30,ECB rate decision (example - check date)
