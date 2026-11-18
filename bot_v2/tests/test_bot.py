@@ -81,22 +81,23 @@ def test_opens_buy_at_min_lot_with_broker_stop_and_target(tmp_path):
     assert abs(row["unit"] - ATR) < 1e-9 and row["tp"] == p.tp
 
 
-def test_pyramid_adds_up_to_max_and_only_while_winning(tmp_path):
-    sim = Sim(tmp_path)
+def test_pyramid_adds_only_after_every_stop_locks_profit(tmp_path):
+    sim = Sim(tmp_path, target_atr=10.0)               # target far away: watch the adds
     open_buy(sim)
-    sim.run_until(lambda: len(sim.positions()) == 3, 10, drift=0.2)
-    ps = sim.positions()
-    kinds = sorted(sim.journal.row(p.ticket)["kind"] for p in ps)
-    assert kinds == ["add", "add", "base"]            # max_adds = 2
-    assert all(p.type == 0 for p in ps)
-    sim.run(1.5, drift=0.0)
-    assert len(sim.positions()) == 3 and "max adds" in sim.tr.status
+    sim.run(1, drift=0.2)
+    assert len(sim.positions()) == 1 and "add waits" in sim.tr.status   # base stop not locked yet
+    sim.run_until(lambda: len(sim.positions()) == 4, 40, drift=0.2)
+    trades = sorted(sim.tr.trades.values(), key=lambda m: m.open_time)
+    assert [m.kind for m in trades] == ["base", "add", "add", "add"]   # max_adds = 3
+    assert all(sim.tr._locked(m) for m in trades[:-1])  # every earlier trade is safe
+    sim.run(3, drift=0.2)
+    assert len(sim.positions()) == 4                   # base + 3 adds = max_trades 4: no 5th trade
+    assert "max adds" in sim.tr.status or "max trades" in sim.tr.status
 
 
 def test_no_add_while_a_trade_is_losing(tmp_path):
     sim = Sim(tmp_path)
     open_buy(sim)
-    sim.cfg["pyramid_step_atr"] = 0.0                 # distance rule out of the way
     t = sim.positions()[0].ticket
     for obj in (sim.fake.open_positions[t], sim.tr.trades[t]):
         obj.price_open = obj.open_price = sim.bid + 0.5   # make it a loser (still above its stop)
@@ -164,8 +165,15 @@ def test_flip_cooldown_blocks_a_quick_second_flip(tmp_path):
     assert len(ps) == 1 and ps[0].type == 0 and sim.journal.row(ps[0].ticket)["kind"] == "flip"
 
 
-def test_no_follow_through_exit_after_stall(tmp_path):
+def test_no_time_exit_by_default(tmp_path):
     sim = Sim(tmp_path, max_adds=0)
+    p = open_buy(sim)
+    sim.run(90, drift=0.0)
+    assert [x.ticket for x in sim.positions()] == [p.ticket]   # only price levels close trades
+
+
+def test_no_follow_through_exit_when_switched_on(tmp_path):
+    sim = Sim(tmp_path, max_adds=0, stall_exit_s=60)
     p = open_buy(sim)
     sim.run(30, drift=0.0)
     assert sim.positions()                              # still waiting
@@ -182,7 +190,8 @@ def test_trailing_stop_moves_broker_sl_and_closes_in_profit(tmp_path):
     assert sim.tr.trades[p.ticket].lock_sl                    # broker SL now locks profit
     sim.run_until(lambda: not sim.positions(), 10, drift=-0.4)
     row = sim.journal.row(p.ticket)
-    assert row["close_reason"] in ("trailing stop", "trailing stop (broker SL)") and row["pnl"] > 0
+    assert row["close_reason"] == "trailing stop (broker SL)" and row["pnl"] > 0   # broker closed it
+    assert row["close_latency_ms"] is None                                          # no bot order needed
 
 
 def test_basket_stop_closes_symbol_and_pauses(tmp_path):
@@ -212,6 +221,22 @@ def test_max_total_lots_blocks_adds(tmp_path):
     open_buy(sim)
     sim.run(4, drift=0.2)
     assert len(sim.positions()) == 1 and "max total lots" in sim.tr.status
+
+
+def test_close_of_already_closed_position_is_not_an_error(tmp_path):
+    sim = Sim(tmp_path, max_adds=0)
+    p = open_buy(sim)
+    sim.fake.fail_next = [sim.fake.TRADE_RETCODE_POSITION_CLOSED]
+    assert sim.tr._close(sim.tr.trades[p.ticket], "target", sim.t) is False
+    assert not [e for e in sim.journal.feed if e[2] == "error"]
+
+
+def test_frozen_position_is_retried(tmp_path):
+    sim = Sim(tmp_path, max_adds=0)
+    p = open_buy(sim)
+    sim.fake.fail_next = [sim.fake.TRADE_RETCODE_FROZEN]
+    assert sim.tr._close(sim.tr.trades[p.ticket], "target", sim.t) is True
+    assert sim.journal.row(p.ticket)["close_reason"] == "target"
 
 
 def test_spread_spike_blocks_entries(tmp_path):
@@ -290,6 +315,7 @@ def test_report_is_honest(tmp_path):
     assert "biggest losing basket -1.00" in text and "max floating drawdown -3.50" in text
     assert "stop loss 1 (avg -3.00)" in text and "target 2 (avg +1.00)" in text
     assert "before spread -0.40" in text and "avg hold: wins 30s" in text
+    assert "orders: open" in text
 
 
 def test_report_blames_the_spread_when_gross_is_positive(tmp_path):

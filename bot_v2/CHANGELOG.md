@@ -3,6 +3,27 @@
 One line per change: what changed, and which market behavior it targets.
 Compare session reports only between sessions run on the same version.
 
+## v2.2 (2026-11-18): exits only at price levels, safer adds, faster direction
+
+Based on the first demo session (19 trades, about 50 minutes: too few to prove anything, but enough to see the problems).
+Gold made +1.84 before spread and −1.76 after it. Adds lost −2.32, almost the whole session loss.
+
+**Exits**
+- **"No follow-through" exit switched off** (`stall_exit_s = 0`). *Behavior:* it closed 9 of 19 trades (−4.49) at exactly 60 s, wherever the price happened to be. Winners needed 64–324 s, so 60 s cut trades that were still normal noise. Now every exit is a price level you can see on the MT5 chart: stop, target or trailing stop.
+- **Trailing stop and target are now closed only by the broker.** The bot-side checks are backups, used only when the broker does not hold that order. *Behavior:* bot-side closes took 500–760 ms and slipped up to about 1 spread on gold. Two times the bot raced the broker's stop and got errors 10029 and 10036.
+- Errors **10029 (position frozen near its stop)** are retried. **10036 (position already closed)** is no longer an error: the broker's real close reason is logged on the next loop.
+
+**Pyramiding**
+- **An add opens only when every open trade on that side has its stop at or beyond its entry** (locked in profit). The old rule was "all in profit, newest +0.5 ATR". Max adds 2 → **3**. *Behavior:* every losing add opened while the earlier trade could still lose. Now the whole basket can lose at most one trade's stop, and adds come only in moves that are already working.
+
+**Entries**
+- **Direction window 20 s → 5 s, threshold 0.5 → 0.25 ATR.** It is about as hard to trigger by noise as before, but it fires after half the price move. *Behavior:* the bot entered after the burst had already gone 0.5 ATR, so it bought late. Now it enters earlier in the move. Expect more signals, and more spread paid.
+- The pause on the same side after a stop loss follows the window: 20 s → 5 s.
+
+**Report and screen**
+- Report adds **order speed and slippage**: average open and close time in ms, and average slippage in points.
+- On screen, a trade's stop shows **green** when it is locked in profit.
+
 ## v2.1 (2026-11-18): exits fixed first, plus speed and a better report
 
 No demo session was run on v2.0, so there is no "before" report to compare against.

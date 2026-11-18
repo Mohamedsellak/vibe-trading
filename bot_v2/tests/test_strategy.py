@@ -68,10 +68,19 @@ def test_trailing_exit_follows_best_price():
     assert abs(st.trail_level(1.2, CFG) - 0.7) < 1e-9
 
 
-def test_no_follow_through_exit():
-    assert st.exit_reason(0.1, 0.3, 59, CFG) is None        # not 60 s yet
-    assert st.exit_reason(0.1, 0.3, 60, CFG) == "no follow-through"
-    assert st.exit_reason(-0.5, 0.45, 120, CFG) is None     # it did move +0.4: the stops handle it now
+def test_bot_exits_are_only_backups_for_broker_orders():
+    assert st.exit_reason(1.6, 1.6, 5, CFG, broker_tp=True) is None        # broker TP will close it
+    assert st.exit_reason(0.5, 1.0, 5, CFG, broker_trail=True) is None     # broker SL locked: it closes it
+    assert st.exit_reason(0.5, 1.0, 5, CFG, broker_trail=False) == "trailing stop"
+
+
+def test_no_follow_through_exit_is_off_by_default():
+    assert CFG["stall_exit_s"] == 0
+    assert st.exit_reason(0.1, 0.3, 600, CFG) is None
+    cfg = dict(CFG, stall_exit_s=60)
+    assert st.exit_reason(0.1, 0.3, 59, cfg) is None
+    assert st.exit_reason(0.1, 0.3, 60, cfg) == "no follow-through"
+    assert st.exit_reason(-0.5, 0.45, 120, cfg) is None     # it did move +0.4: the stops handle it now
 
 
 def test_loss_is_smaller_than_win_by_design():
@@ -80,10 +89,17 @@ def test_loss_is_smaller_than_win_by_design():
 
 
 # ----- pyramiding -----
-def test_pyramid_adds_only_to_winners():
-    assert st.should_add([0.6], 0.6, 0, CFG)
-    assert not st.should_add([0.4], 0.4, 0, CFG)           # not far enough
-    assert not st.should_add([1.0, -0.1], 0.6, 1, CFG)     # one trade losing -> never add
-    assert not st.should_add([1.0, 0.0], 0.6, 1, CFG)      # break-even is not a winner
-    assert not st.should_add([1.5, 1.0, 0.6], 0.6, 2, CFG)  # max adds reached
-    assert not st.should_add([], 0, 0, CFG)
+def test_locked_means_stop_at_or_beyond_entry():
+    assert st.is_locked(st.BUY, 100.0, 100.0) and st.is_locked(st.BUY, 100.0, 100.3)
+    assert not st.is_locked(st.BUY, 100.0, 99.0)
+    assert st.is_locked(st.SELL, 100.0, 99.7) and not st.is_locked(st.SELL, 100.0, 101.0)
+    assert not st.is_locked(st.SELL, 100.0, 0.0)              # no stop at all
+
+
+def test_pyramid_adds_only_when_every_stop_locks_profit():
+    assert st.should_add([True], 0, CFG)
+    assert st.should_add([True, True], 1, CFG)
+    assert not st.should_add([True, False], 1, CFG)          # the newest trade is not safe yet
+    assert not st.should_add([False], 0, CFG)
+    assert not st.should_add([True] * 4, 3, CFG)              # max adds reached
+    assert not st.should_add([], 0, CFG)

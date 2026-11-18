@@ -44,6 +44,7 @@ class OrderResult:
     latency_ms: float = 0.0
     market_closed: bool = False
     message: str = ""
+    gone: bool = False          # the position was already closed (by its broker stop or target)
     sl: float = 0.0             # stop and target the broker really holds (after a fill)
     tp: float = 0.0
 
@@ -61,7 +62,9 @@ class Broker:
         self.DONE = {m.TRADE_RETCODE_DONE, m.TRADE_RETCODE_DONE_PARTIAL}
         self.RETRY = {m.TRADE_RETCODE_REQUOTE, m.TRADE_RETCODE_PRICE_CHANGED,
                       m.TRADE_RETCODE_PRICE_OFF, m.TRADE_RETCODE_TIMEOUT,
-                      m.TRADE_RETCODE_CONNECTION, m.TRADE_RETCODE_TOO_MANY_REQUESTS}
+                      m.TRADE_RETCODE_CONNECTION, m.TRADE_RETCODE_TOO_MANY_REQUESTS,
+                      getattr(m, "TRADE_RETCODE_FROZEN", 10029)}      # price at the stop: broker is acting
+        self.GONE = getattr(m, "TRADE_RETCODE_POSITION_CLOSED", 10036)
 
     # ---------- connection ----------
     def connect(self, login=None, password=None, server=None, path=None):
@@ -208,6 +211,9 @@ class Broker:
                                message=f"retcode {res.retcode} {res.comment}")
             if res.retcode == m.TRADE_RETCODE_MARKET_CLOSED:
                 last.market_closed = True
+                return last
+            if res.retcode == self.GONE:
+                last.gone = True
                 return last
             if res.retcode == m.TRADE_RETCODE_INVALID_FILL:
                 self._next_filling(spec)

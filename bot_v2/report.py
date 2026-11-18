@@ -149,6 +149,11 @@ def stats(rows):
         hold_win=_avg([h for h, p in hold if p > 0]), hold_loss=_avg([h for h, p in hold if p <= 0]),
         worst_basket=min(baskets.values()) if baskets else 0.0,
         reasons=reasons,
+        lat_open=_avg([r["open_latency_ms"] for r in rows if r["open_latency_ms"] is not None]),
+        lat_close=_avg([r["close_latency_ms"] for r in rows if r["close_latency_ms"] is not None]),
+        slip_open=_avg([r["open_slip_pts"] for r in rows if r["open_slip_pts"] is not None]),
+        slip_close=_avg([r["close_slip_pts"] for r in rows if r["close_slip_pts"] is not None]),
+        bot_closes=sum(1 for r in rows if r["close_latency_ms"] is not None),
     )
 
 
@@ -201,6 +206,10 @@ def build_report(journal, worst_floating, currency="", blocks=None):
                 f"  biggest losing basket {min(st['worst_basket'], 0.0):+.2f}   max floating drawdown {dd:+.2f}",
                 "  closed by: " + (", ".join(f"{k} {len(v)} (avg {_avg(v):+.2f})"
                                              for k, v in sorted(st["reasons"].items())) or "-"),
+                f"  orders: open {st['lat_open']:.0f} ms avg, slippage {st['slip_open']:+.0f} pts avg   "
+                f"bot closes {st['bot_closes']}: {st['lat_close']:.0f} ms avg, slippage {st['slip_close']:+.0f} pts avg"
+                if sym != "ALL" else
+                f"  orders: open {st['lat_open']:.0f} ms avg   bot closes {st['bot_closes']}: {st['lat_close']:.0f} ms avg",
             ] + blines
             if st["losses"] and abs(st["avg_loss"]) > st["avg_win"]:
                 lines.append("  [bold red]HONEST NOTE: average loss is BIGGER than average win.[/]")

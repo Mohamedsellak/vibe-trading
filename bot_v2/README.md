@@ -12,9 +12,9 @@ Two yardsticks, both measured live from each symbol's own prices:
 - **ATR** = the average range of the last 14 one-minute bars, or how far price normally moves in a minute. Every distance is in ATR.
 - **spread** = the cost. It is used only for cost checks.
 
-1. **Direction:** price move over the last 20 s. +0.5 ATR or more = UP, −0.5 ATR or less = DOWN, otherwise FLAT.
+1. **Direction:** price move over the last 5 s. +0.25 ATR or more = UP, −0.25 ATR or less = DOWN, otherwise FLAT.
 2. **Trend:** on 1-minute bars, EMA(8) against EMA(21). A gap over 0.15 ATR = UP or DOWN. A trade opens only when direction and trend agree.
-3. **Exits:** broker stop at 1 ATR, broker target at 1.5 ATR, trailing from +0.8 ATR, and an exit if the trade gets no follow-through within 60 s.
+3. **Exits:** all at the broker. The stop is 1 ATR away and the target 1.5 ATR. From +0.8 ATR, the stop trails 0.5 ATR behind the best price.
 4. **Filters:** no entry if the last 20 bars zig-zag (net move ÷ total path < 0.25), or if the target is under 4× the spread (too costly).
 5. **Weak spot:** if the entries have no real edge, every trade loses about one spread on average, whatever the stop and target. Only the session report can show whether there is an edge.
 
@@ -23,11 +23,11 @@ See `CHANGELOG.md` for what changed in each version and why.
 ## What the bot does
 - **Opens** a BUY when price goes up and the trend agrees, or a SELL when price goes down and the trend agrees. Lot size is always the symbol's minimum lot and never grows.
 - **Sets a stop loss and a take profit at the broker** as soon as a trade opens: the stop 1 ATR away, the target 1.5 ATR away. So a win is bigger than a loss, and both work even if the bot stops.
-- **Trailing stop:** once a trade has been +0.8 ATR, the stop follows 0.5 ATR behind the best price, and the broker stop is moved too.
-- **No follow-through exit:** after 60 s, the bot closes a trade that never got to +0.4 ATR.
-- **Pyramids:** adds one more trade in the same direction when every open trade on that side is in profit and the newest one is +0.5 ATR. At most 2 adds per direction. It never adds to a losing trade.
+- **Trailing stop:** once a trade has been +0.8 ATR, the bot moves the broker stop up to 0.5 ATR behind the best price. The broker closes the trade there, with no bot delay.
+- **No time exit:** a trade closes only at a price level (stop, target or trailing stop), so you can see all of them on the MT5 chart. `stall_exit_s` can switch an optional time exit back on.
+- **Pyramids:** adds one more trade in the same direction only when every open trade on that side has its stop locked in profit (shown green on screen). So the basket can never lose more than one trade's stop. At most 3 adds per direction. It never adds to a losing trade.
 - **Flips:** after a stop loss, the next trade may be in the opposite direction, but only if the trend agrees. Protections: a 15 s cooldown after each flip, at most 20 flips per hour, and no entries while the market is choppy.
-- **No re-buying a failed move:** after a stop loss, no new trade on the same side for 20 s, until the direction window holds only fresh prices.
+- **No re-buying a failed move:** after a stop loss, no new trade on the same side for 5 s (the direction window), so only fresh prices count.
 - **Never trades against itself:** it opens no BUY while its own SELLs are open, and the other way round.
 - **Basket stop:** if one symbol's floating loss reaches `basket_stop_money`, the bot closes all trades on that symbol and pauses it for 15 minutes.
 - **Optional daily loss limit:** `DAILY_LOSS_LIMIT = 0` means off.
@@ -94,7 +94,8 @@ Shown per symbol and in total:
 - average hold time of wins and of losses
 - flips (and how many won), pyramid adds (and their results)
 - biggest losing basket, max floating drawdown
-- close reasons, with the average PnL of each (target, stop loss, trailing stop, no follow-through ...)
+- close reasons, with the average PnL of each (target, stop loss, trailing stop ...)
+- order speed: average open and close time (ms) and slippage (points)
 - **time spent**: the share of time each reason kept the bot from entering
 
 The report says plainly:
@@ -104,13 +105,13 @@ The report says plainly:
 - when the spread was too big for the symbol's normal moves most of the time (too expensive to scalp there on a Standard account)
 
 **How to read it:**
-- If **no follow-through** closes many trades with a loss, the entries come too late.
+- If **orders** take more than about 300 ms, the PC is far from the broker. A VPS near the server helps more than any code change.
 - If **time spent** is mostly "spread too high vs volatility", that symbol is too costly on a Standard account.
 
 ## Tests
 `tests/` runs the real bot code against a fake MT5 module (`tests/fake_mt5.py`). The tests cover:
 - risk limits, lot sizing, sessions, news, spread
-- ATR, broker stop and target, trailing, no follow-through exit
+- ATR, broker stop and target, trailing, optional time exit, broker-only exits, locked-stop pyramid adds
 - pyramiding, flips and flip cooldown, no re-entry right after a stop
 - basket stop, daily limit, kill switch, restart adoption
 - requote retry, filling-mode switch, market closed

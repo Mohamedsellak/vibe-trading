@@ -1,8 +1,8 @@
 """bot_v2 strategy. Distances are in ATR = average 1-minute range (volatility). Spread is the cost.
 
-1. DIRECTION: price move over the last 20 s: >= +0.5 ATR = UP, <= -0.5 ATR = DOWN, else FLAT.
+1. DIRECTION: price move over the last 5 s: >= +0.25 ATR = UP, <= -0.25 ATR = DOWN, else FLAT.
 2. TREND: 1-minute bars, EMA(8) vs EMA(21); gap > 0.15 ATR = UP/DOWN. Entries need direction == trend.
-3. EXITS: broker stop 1 ATR, broker target 1.5 ATR, trailing from +0.8 ATR, exit if no follow-through in 60 s.
+3. EXITS: all at the broker: stop 1 ATR, target 1.5 ATR, stop trails 0.5 ATR behind from +0.8 ATR.
 4. FILTERS: no entry if the 20-bar path zig-zags, or the target is under 4x the spread (too costly).
 5. FLAW: with no real edge every trade loses about 1 spread on average; only the report can show an edge.
 """
@@ -125,13 +125,15 @@ def pnl_units(side, open_price, bid, ask, unit):
     return diff / unit
 
 
-def exit_reason(pnl_u, peak_u, age_s, cfg):
-    """Bot-side exits, in ATR units. The broker stop and target also exist at the broker."""
-    if pnl_u >= cfg["target_atr"]:
+def exit_reason(pnl_u, peak_u, age_s, cfg, broker_tp=False, broker_trail=False):
+    """Bot-side exits, in ATR units. They are BACKUPS: when the broker already holds the
+    target (broker_tp) or a stop locked in profit (broker_trail), the broker closes the trade
+    on its server, faster and without the bot's order delay."""
+    if not broker_tp and pnl_u >= cfg["target_atr"]:
         return "target"
-    if peak_u >= cfg["trail_start_atr"] and pnl_u <= peak_u - cfg["trail_dist_atr"]:
+    if not broker_trail and peak_u >= cfg["trail_start_atr"] and pnl_u <= peak_u - cfg["trail_dist_atr"]:
         return "trailing stop"
-    if age_s >= cfg["stall_exit_s"] and peak_u < cfg["stall_min_atr"]:
+    if cfg["stall_exit_s"] > 0 and age_s >= cfg["stall_exit_s"] and peak_u < cfg["stall_min_atr"]:
         return "no follow-through"
     return None
 
@@ -143,10 +145,16 @@ def trail_level(peak_u, cfg):
     return peak_u - cfg["trail_dist_atr"]
 
 
-def should_add(side_pnls, newest_pnl, adds_done, cfg):
-    """Pyramid: every trade on this side in profit, newest one far enough ahead, adds left."""
-    if adds_done >= cfg["max_adds"] or not side_pnls:
+def is_locked(side, open_price, sl):
+    """True when the stop is at or beyond the entry: the trade can no longer lose."""
+    if not sl:
         return False
-    if any(p <= 0 for p in side_pnls):
+    return sl >= open_price if side == BUY else sl <= open_price
+
+
+def should_add(side_locked, adds_done, cfg):
+    """Pyramid: add only while EVERY open trade on this side has its stop locked in profit,
+    so the basket can never lose more than one trade's stop (the new add's)."""
+    if adds_done >= cfg["max_adds"] or not side_locked:
         return False
-    return newest_pnl >= cfg["pyramid_step_atr"]
+    return all(side_locked)

@@ -44,8 +44,8 @@ DEFAULTS = dict(
     atr_period=14,               # ATR over the last 14 finished 1-minute bars
 
     # Direction: price move over the last N seconds
-    dir_lookback_s=20,
-    dir_min_move_atr=0.5,        # move of 0.5 ATR or more = UP / DOWN
+    dir_lookback_s=5,
+    dir_min_move_atr=0.25,       # move of 0.25 ATR or more = UP / DOWN
 
     # Trend check: EMA fast vs EMA slow on 1-minute bars
     trend_fast=8,
@@ -61,12 +61,11 @@ DEFAULTS = dict(
     target_atr=1.5,              # broker-side take profit, set at open (win 1.5 vs loss 1.0)
     trail_start_atr=0.8,         # once the best profit reaches +0.8 ATR ...
     trail_dist_atr=0.5,          # ... the stop follows 0.5 ATR behind the best price (locks >= +0.3)
-    stall_exit_s=60,             # close after 60 s ...
+    stall_exit_s=0,              # 0 = off. If set: close after N s ...
     stall_min_atr=0.4,           # ... if the best profit never reached +0.4 ATR (no follow-through)
 
-    # Pyramiding (adds only to winners)
-    pyramid_step_atr=0.5,        # newest trade must be +0.5 ATR before the next add
-    max_adds=2,                  # adds per direction
+    # Pyramiding: add only when every open trade on that side has its stop locked in profit
+    max_adds=3,                  # adds per direction
 
     # Flips (opposite trade after a stop loss)
     flip_cooldown_s=15,

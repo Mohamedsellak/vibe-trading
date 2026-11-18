@@ -35,6 +35,7 @@ class TradeMeta:
     peak: float = -1e9       # best PnL seen, in ATR
     adverse_since: float | None = None
     sl: float = 0.0
+    tp: float = 0.0
     lock_sl: bool = False    # broker SL moved into profit by the trailing stop
     last_modify: float = 0.0
     missing: int = 0         # loops the position was gone without close history
@@ -150,7 +151,7 @@ class SymbolTrader:
         self.live = {p.ticket: p for p in positions}
         for ticket, m in list(self.trades.items()):
             if ticket in self.live:
-                m.sl = self.live[ticket].sl
+                m.sl, m.tp = self.live[ticket].sl, self.live[ticket].tp
                 if not m.unit and unit > 0:
                     m.unit = unit
             else:
@@ -171,7 +172,7 @@ class SymbolTrader:
                               volume=p.volume, open_time=now, open_price=p.price_open, unit=u,
                               spread_open=0.0, spread_cost=0.0, sl=p.sl)
         self.basket = basket
-        m = TradeMeta(p.ticket, side, kind, basket, p.volume, p.price_open, now, u, sl=p.sl)
+        m = TradeMeta(p.ticket, side, kind, basket, p.volume, p.price_open, now, u, sl=p.sl, tp=p.tp)
         self.trades[p.ticket] = m
         self.j.event(self.name, "info", f"adopted #{p.ticket} {side} {p.volume} @ {p.price_open}")
 
@@ -193,7 +194,7 @@ class SymbolTrader:
             return
         d = out[-1]
         if d.reason == mt5.DEAL_REASON_SL:
-            reason = "trailing stop (broker SL)" if m.lock_sl else "stop loss"
+            reason = "trailing stop (broker SL)" if (m.lock_sl or self._locked(m)) else "stop loss"
         elif d.reason == mt5.DEAL_REASON_TP:
             reason = "target (broker TP)"
         elif d.reason == mt5.DEAL_REASON_SO:
@@ -228,6 +229,8 @@ class SymbolTrader:
             return False
         dev = risk.deviation_points(self.spec, self.ms.median_spread(), self.cfg["deviation_spreads"])
         res = self.b.close(self.spec, pos, dev, f"v2 {reason}")
+        if res.gone:          # the broker's own stop or target closed it first: logged on the next loop
+            return False
         if not res.ok:
             if res.market_closed:
                 self.market_closed_until = now + 60
@@ -255,11 +258,16 @@ class SymbolTrader:
                 continue
             u = st.pnl_units(m.side, m.open_price, tick.bid, tick.ask, m.unit)
             m.peak = max(m.peak, u)
-            reason = st.exit_reason(u, m.peak, now - m.open_time, self.cfg)
+            reason = st.exit_reason(u, m.peak, now - m.open_time, self.cfg,
+                                    broker_tp=m.tp > 0, broker_trail=self._locked(m))
             if reason:
                 self._close(m, reason, now)
                 continue
             self._trail_sl(m, tick, now)
+
+    @staticmethod
+    def _locked(m):
+        return st.is_locked(m.side, m.open_price, m.sl)
 
     def _trail_sl(self, m, tick, now):
         """Move the broker SL behind the best price, so the profit is protected at the broker too."""
@@ -332,13 +340,12 @@ class SymbolTrader:
             self._open(want, kind, unit, tick, now)
             return None
         adds = sum(1 for m in mine if m.kind == "add")
-        pnls = [st.pnl_units(m.side, m.open_price, tick.bid, tick.ask, m.unit) for m in mine]
-        newest = max(mine, key=lambda m: m.open_time)
-        newest_pnl = st.pnl_units(newest.side, newest.open_price, tick.bid, tick.ask, newest.unit)
-        if st.should_add(pnls, newest_pnl, adds, self.cfg):
+        if adds >= self.cfg["max_adds"]:
+            return "max adds reached"
+        if st.should_add([self._locked(m) for m in mine], adds, self.cfg):
             self._open(want, "add", unit, tick, now)
             return None
-        return "max adds reached" if adds >= self.cfg["max_adds"] else None
+        return "add waits until all stops lock profit"
 
     def _open(self, side, kind, unit, tick, now):
         sp, cfg = self.spec, self.cfg
@@ -362,7 +369,7 @@ class SymbolTrader:
         sgn = 1 if side == st.BUY else -1
         sl = res.sl or sp.round_price(res.price - sgn * sl_dist)
         tp = res.tp or sp.round_price(res.price + sgn * tp_dist)
-        m = TradeMeta(res.ticket, side, kind, self.basket, self.lot, res.price, now, unit, sl=sl)
+        m = TradeMeta(res.ticket, side, kind, self.basket, self.lot, res.price, now, unit, sl=sl, tp=tp)
         self.trades[res.ticket] = m
         self.j.open_trade(ticket=res.ticket, symbol=self.name, side=side, kind=kind, basket=self.basket,
                           volume=self.lot, open_time=now, open_price=res.price, req_open_price=res.req_price,

@@ -93,7 +93,8 @@ def symbol_panel(tr):
             pnl = (p.profit + p.swap) if p else 0.0
             u = (ms.bid - m.open_price if m.side == "BUY" else m.open_price - ms.ask) / m.unit if m.unit else 0.0
             t.add_row(str(m.ticket), Text(m.side, style="green" if m.side == "BUY" else "red"), m.kind,
-                      f"{m.volume}", f"{m.open_price:.{d}f}", f"{m.sl:.{d}f}" if m.sl else "-",
+                      f"{m.volume}", f"{m.open_price:.{d}f}",
+                      Text(f"{m.sl:.{d}f}", style="green" if tr._locked(m) else "") if m.sl else "-",
                       _money(pnl), f"{u:+.2f}", f"{tr.now - m.open_time:.0f}s")
         parts.append(t)
     return Panel(Group(*parts), title=f"[bold]{tr.name}[/]", border_style="blue")
