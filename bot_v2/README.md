@@ -1,4 +1,4 @@
-# bot_v2: live MT5 scalping bot (Exness, hedging account)
+# bot_v2: live MT5 scalping bot (Exness, hedging account)-
 
 A Python script that trades live in MetaTrader 5 while you watch it on screen.
 You choose the account: log in to MT5 with a demo account to test, and with a real account only when you decide to.
