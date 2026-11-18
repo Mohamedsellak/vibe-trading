@@ -97,6 +97,7 @@ def test_locked_means_stop_at_or_beyond_entry():
 
 
 def test_pyramid_adds_only_when_every_stop_locks_profit():
+    CFG = dict(globals()["CFG"], max_adds=3)                  # pyramiding is off by default
     assert st.should_add([True], 0, CFG)
     assert st.should_add([True, True], 1, CFG)
     assert not st.should_add([True, False], 1, CFG)          # the newest trade is not safe yet

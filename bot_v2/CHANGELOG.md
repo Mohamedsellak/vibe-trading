@@ -4,6 +4,15 @@ One line per change: what changed, and which market behavior it targets.
 Compare session reports only between sessions run on the same version.
 Since v2.3 every trade is saved with its version, and `python report.py` shows one version's trades from all sessions together.
 
+## v2.5 (2026-11-18): pyramiding off, measure stops better
+
+Based on the v2.4 demo ($100, 21 trades, about 85 minutes): −12.58 in total. Gold made −14.10, with 0 targets hit in 13 trades. BTC made +1.52. EURUSD stayed out, as v2.4 intended.
+Across all demo sessions so far (v2.1 to v2.4, 91 trades): **first trades (base + flip) 49, +0.07; adds 42, −10.82.** So the adds made almost all of the loss.
+
+- **Pyramiding switched off** (`max_adds = 0`). Turn it back on with `max_adds = 3`. *Behavior:* an add can open only after the earlier trades are about 0.8–1.0 ATR in profit. Gold's moves mostly stopped around +0.8 to +1.0 ATR (12 of 34 gold trades peaked there, and only 6 went past +1.3). So adds opened right where the move usually ends, and lost in every version except one session.
+- **Worst point of each trade is saved** (`trough_units`, in ATR), and the report shows the average best and worst point for winners and losers. *Behavior:* 15 of 34 gold trades never got even +0.3 ATR in profit, then lost a full stop. With the worst point saved, the next report can show whether a tighter early stop would cut those without cutting the winners. Today the data can't answer that.
+- **Broker stop and target fills are measured:** the report shows how far from the stop or target level the broker filled, on average. *Behavior:* several gold stops filled 0.5–0.9 USD (2–4 spreads) worse than the stop level. That cost is hidden in "stop loss" today.
+
 ## v2.4 (2026-11-18): stricter cost gate, clearer startup
 
 Based on the v2.3 demo (22 trades, about 25 minutes, on a $10 balance): +1.65 in total. BTC made +1.84, mostly in one 10-minute selloff. EURUSD made −0.19, and +0.21 before spread. Gold made no trades: the 10% risk cap blocked it correctly. This is too little data to change the entry or exit rules, so this version changes none of them.

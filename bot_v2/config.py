@@ -13,7 +13,7 @@ See CHANGELOG.md for what changed and why.
 # the bot finds the real name with symbols_get() at startup.
 SYMBOLS = ["XAUUSD", "BTCUSD", "EURUSD"]
 
-VERSION = "2.4"             # saved with every trade, so reports compare one version only (see CHANGELOG.md)
+VERSION = "2.5"             # saved with every trade, so reports compare one version only (see CHANGELOG.md)
 MAGIC = 26111802            # tags the bot's own orders; other trades are ignored
 LOOP_MS = 25                # how often prices and trades are checked (ms)
 SCREEN_REFRESH_S = 1.0      # how often the screen redraws
@@ -68,7 +68,7 @@ DEFAULTS = dict(
     stall_min_atr=0.4,           # ... if the best profit never reached +0.4 ATR (no follow-through)
 
     # Pyramiding: add only when every open trade on that side has its stop locked in profit
-    max_adds=3,                  # adds per direction
+    max_adds=0,                  # adds per direction. 0 = pyramiding off (42 demo adds lost -10.82, see CHANGELOG v2.5)
     add_min_room_atr=0.3,        # an add needs at least 0.3 ATR between its price and the basket's locked stop
 
     # Flips (opposite trade after a stop loss)

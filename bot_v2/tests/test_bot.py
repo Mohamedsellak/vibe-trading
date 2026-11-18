@@ -82,7 +82,7 @@ def test_opens_buy_at_min_lot_with_broker_stop_and_target(tmp_path):
 
 
 def test_pyramid_adds_only_after_every_stop_locks_profit(tmp_path):
-    sim = Sim(tmp_path, target_atr=10.0)               # target far away: watch the adds
+    sim = Sim(tmp_path, target_atr=10.0, max_adds=3)   # target far away: watch the adds
     open_buy(sim)
     sim.run(1, drift=0.2)
     assert len(sim.positions()) == 1 and "add waits" in sim.tr.status   # base stop not locked yet
@@ -107,7 +107,7 @@ def test_add_shares_the_basket_locked_stop(tmp_path):
 
 
 def test_add_waits_when_price_is_too_close_to_basket_stop(tmp_path):
-    sim = Sim(tmp_path, target_atr=10.0, add_min_room_atr=5.0)   # room rule impossible to meet
+    sim = Sim(tmp_path, target_atr=10.0, max_adds=3, add_min_room_atr=5.0)   # room rule impossible
     open_buy(sim)
     sim.run_until(lambda: sim.tr._locked(next(iter(sim.tr.trades.values()))), 10, drift=0.2)
     sim.run(2, drift=0.2)
@@ -169,6 +169,30 @@ def test_report_cli_does_not_invent_a_drawdown(tmp_path):
     j.close_trade(1, close_time=j.session_start + 9, close_price=100.0, close_reason="target", pnl=1.0, pnl_points=100)
     text = "\n".join(build_report(j, {}, "USD", rows=j.closed_since(0), title="REPORT"))
     assert "max floating drawdown" not in text and "trades 1" in text
+
+
+def test_pyramiding_is_off_by_default(tmp_path):
+    assert config.symbol_config("XAUUSD")["max_adds"] == 0
+    sim = Sim(tmp_path, target_atr=10.0)
+    open_buy(sim)
+    sim.run(20, drift=0.2)                             # a strong move: v2.4 would have added 3 times
+    assert len(sim.positions()) == 1 and "max adds" in sim.tr.status
+
+
+def test_worst_point_and_broker_stop_fill_are_recorded(tmp_path):
+    sim = Sim(tmp_path, max_adds=0)
+    p = open_buy(sim)
+    sl = sim.fake.open_positions[p.ticket].sl
+    sim.run(1, drift=-0.4)                             # goes against the trade
+    sim.bid = sl - 0.3                                 # gap through the stop: filled 0.30 worse
+    sim.run(0.5)
+    row = sim.journal.row(p.ticket)
+    assert row["close_reason"] == "stop loss"
+    assert row["trough_units"] is not None and row["trough_units"] < -0.5
+    assert abs(row["close_slip_pts"] - 30) < 1.5      # 0.30 price = 30 points worse than the stop
+    text = "\n".join(build_report(sim.journal, {SYM: 0.0}, "USD", rows=sim.closed(), title="R"))
+    assert "broker stop/target fills 1: +30 pts from the level avg" in text
+    assert "best / worst point (ATR)" in text
 
 
 def test_no_add_while_a_trade_is_losing(tmp_path):
@@ -352,7 +376,7 @@ def test_restart_adopts_open_trades_and_reconciles_closed_ones(tmp_path):
 
 
 def test_close_everything_for_kill_switch(tmp_path):
-    sim = Sim(tmp_path)
+    sim = Sim(tmp_path, max_adds=3)
     open_buy(sim)
     sim.run_until(lambda: len(sim.positions()) >= 2, 10, drift=0.2)
     assert sim.bot.close_everything("kill switch", sim.t) == 0

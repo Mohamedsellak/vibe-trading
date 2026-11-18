@@ -33,6 +33,7 @@ class TradeMeta:
     open_time: float
     unit: float              # ATR frozen at open (price); all exit distances are in this unit
     peak: float = -1e9       # best PnL seen, in ATR
+    trough: float = 1e9      # worst PnL seen, in ATR (how far it went against us)
     adverse_since: float | None = None
     sl: float = 0.0
     tp: float = 0.0
@@ -202,7 +203,12 @@ class SymbolTrader:
             reason = "stop out"
         else:
             reason = "closed outside bot"
-        self._record_close(m, now, d.price, reason, self._deal_pnl(deals), None, None)
+        # how far the broker's fill was from the stop / target level (positive = worse for us)
+        level = m.sl if d.reason == mt5.DEAL_REASON_SL else m.tp if d.reason == mt5.DEAL_REASON_TP else 0.0
+        fill_slip = None
+        if level and d.price:
+            fill_slip = ((level - d.price) if m.side == st.BUY else (d.price - level)) / self.spec.point
+        self._record_close(m, now, d.price, reason, self._deal_pnl(deals), fill_slip, None)
         if reason == "stop loss":
             self.pending_flip_from = m.side
             self.last_stop = (m.side, now)
@@ -210,17 +216,22 @@ class SymbolTrader:
     def _record_close(self, m, now, price, reason, pnl, slip, latency, was_live=False):
         pts = 0.0
         if price:
-            pts = ((price - m.open_price) if m.side == st.BUY else (m.open_price - price)) / self.spec.point
+            diff = (price - m.open_price) if m.side == st.BUY else (m.open_price - price)
+            pts = diff / self.spec.point
+            if m.unit:                       # the exit price counts too (a gap through the stop)
+                m.trough, m.peak = min(m.trough, diff / m.unit), max(m.peak, diff / m.unit)
         self.j.close_trade(m.ticket, close_time=now, close_price=price, close_reason=reason,
                            close_slip_pts=slip, close_latency_ms=latency, pnl=pnl, pnl_points=pts,
-                           peak_units=m.peak if m.peak > -1e8 else None)
+                           peak_units=m.peak if m.peak > -1e8 else None,
+                           trough_units=m.trough if m.trough < 1e8 else None)
         self.trades.pop(m.ticket, None)
         self.live.pop(m.ticket, None)
         if was_live and self.ctx:
             self.ctx.total_open -= 1
             self.ctx.total_lots -= m.volume
         self.realized_today += pnl
-        extra = f", slip {slip:+.0f} pts, {latency:.0f} ms" if latency is not None else ""
+        extra = f", slip {slip:+.0f} pts, {latency:.0f} ms" if latency is not None else \
+            f", filled {slip:+.0f} pts from the level" if slip is not None else ""
         self.j.event(self.name, "close", f"CLOSED #{m.ticket} {m.side} {m.kind} by {reason}: "
                      f"{pnl:+.2f} ({pts:+.0f} pts){extra}")
 
@@ -259,6 +270,7 @@ class SymbolTrader:
                 continue
             u = st.pnl_units(m.side, m.open_price, tick.bid, tick.ask, m.unit)
             m.peak = max(m.peak, u)
+            m.trough = min(m.trough, u)
             reason = st.exit_reason(u, m.peak, now - m.open_time, self.cfg,
                                     broker_tp=m.tp > 0, broker_trail=self._locked(m))
             if reason:

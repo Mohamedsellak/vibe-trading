@@ -12,8 +12,10 @@ TRADE_COLS = """ticket INTEGER PRIMARY KEY, symbol TEXT, side TEXT, kind TEXT, b
     volume REAL, open_time REAL, open_price REAL, req_open_price REAL, open_slip_pts REAL,
     open_latency_ms REAL, spread_open REAL, spread_cost REAL, unit REAL, sl REAL,
     close_time REAL, close_price REAL, close_reason TEXT, close_slip_pts REAL,
-    close_latency_ms REAL, pnl REAL, pnl_points REAL, peak_units REAL, tp REAL, version TEXT"""
-# unit = ATR (price) frozen at open. peak_units = best profit seen, in ATR.
+    close_latency_ms REAL, pnl REAL, pnl_points REAL, peak_units REAL, tp REAL, version TEXT,
+    trough_units REAL"""
+# unit = ATR (price) frozen at open. peak_units / trough_units = best / worst PnL seen, in ATR.
+# close_slip_pts: bot close = slippage of the bot's order; broker stop/target = fill vs the level.
 
 STYLE = {"open": "cyan", "add": "cyan", "flip": "magenta", "close": "white",
          "signal": "dim", "warn": "yellow", "error": "red", "info": "white"}
@@ -152,7 +154,15 @@ def stats(rows):
         lat_open=_avg([r["open_latency_ms"] for r in rows if r["open_latency_ms"] is not None]),
         lat_close=_avg([r["close_latency_ms"] for r in rows if r["close_latency_ms"] is not None]),
         slip_open=_avg([r["open_slip_pts"] for r in rows if r["open_slip_pts"] is not None]),
-        slip_close=_avg([r["close_slip_pts"] for r in rows if r["close_slip_pts"] is not None]),
+        slip_close=_avg([r["close_slip_pts"] for r in rows
+                         if r["close_slip_pts"] is not None and r["close_latency_ms"] is not None]),
+        fill_slip=_avg([r["close_slip_pts"] for r in rows
+                        if r["close_slip_pts"] is not None and r["close_latency_ms"] is None]),
+        broker_fills=sum(1 for r in rows if r["close_slip_pts"] is not None and r["close_latency_ms"] is None),
+        worst_loss=_avg([r["trough_units"] for r in rows if r["trough_units"] is not None and (r["pnl"] or 0) <= 0]),
+        worst_win=_avg([r["trough_units"] for r in rows if r["trough_units"] is not None and (r["pnl"] or 0) > 0]),
+        peak_loss=_avg([r["peak_units"] for r in rows if r["peak_units"] is not None and (r["pnl"] or 0) <= 0]),
+        peak_win=_avg([r["peak_units"] for r in rows if r["peak_units"] is not None and (r["pnl"] or 0) > 0]),
         bot_closes=sum(1 for r in rows if r["close_latency_ms"] is not None),
     )
 
@@ -210,9 +220,12 @@ def build_report(journal, worst_floating, currency="", blocks=None, rows=None, t
                 "  closed by: " + (", ".join(f"{k} {len(v)} (avg {_avg(v):+.2f})"
                                              for k, v in sorted(st["reasons"].items())) or "-"),
                 f"  orders: open {st['lat_open']:.0f} ms avg, slippage {st['slip_open']:+.0f} pts avg   "
-                f"bot closes {st['bot_closes']}: {st['lat_close']:.0f} ms avg, slippage {st['slip_close']:+.0f} pts avg"
+                f"bot closes {st['bot_closes']}: {st['lat_close']:.0f} ms avg, slippage {st['slip_close']:+.0f} pts avg   "
+                f"broker stop/target fills {st['broker_fills']}: {st['fill_slip']:+.0f} pts from the level avg"
                 if sym != "ALL" else
                 f"  orders: open {st['lat_open']:.0f} ms avg   bot closes {st['bot_closes']}: {st['lat_close']:.0f} ms avg",
+                f"  best / worst point (ATR): winners {st['peak_win']:+.2f} / {st['worst_win']:+.2f}   "
+                f"losers {st['peak_loss']:+.2f} / {st['worst_loss']:+.2f}",
             ] + blines
             if st["losses"] and abs(st["avg_loss"]) > st["avg_win"]:
                 lines.append("  [bold red]HONEST NOTE: average loss is BIGGER than average win.[/]")
