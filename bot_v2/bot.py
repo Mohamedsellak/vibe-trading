@@ -70,7 +70,8 @@ class SymbolTrader:
         self.block_time = {}         # why no entry: seconds per reason (for the report)
         self._last_step_t = None
         self.status = "starting"
-        self.paused_until = self.market_closed_until = 0.0
+        self.paused_until = self.market_closed_until = self.no_money_until = 0.0
+        self._acct, self._acct_t = None, -1e9
         self.pending_flip_from = None
         self.last_stop = (None, -1e9)    # (side, time) of the last stop loss
         self.last_entry = -1e9
@@ -170,7 +171,7 @@ class SymbolTrader:
             basket = self.basket if self.trades else self.j.next_basket()
             self.j.open_trade(ticket=p.ticket, symbol=self.name, side=side, kind=kind, basket=basket,
                               volume=p.volume, open_time=now, open_price=p.price_open, unit=u,
-                              spread_open=0.0, spread_cost=0.0, sl=p.sl)
+                              spread_open=0.0, spread_cost=0.0, sl=p.sl, version=config.VERSION)
         self.basket = basket
         m = TradeMeta(p.ticket, side, kind, basket, p.volume, p.price_open, now, u, sl=p.sl, tp=p.tp)
         self.trades[p.ticket] = m
@@ -297,6 +298,8 @@ class SymbolTrader:
             return f"cooldown after basket stop ({self.paused_until - now:.0f}s)"
         if now < self.market_closed_until:
             return "market closed"
+        if now < self.no_money_until:
+            return f"not enough free margin: paused ({self.no_money_until - now:.0f}s)"
         if not risk.in_session(cfg["sessions"], now + self.offset_s):
             return "outside session"
         title = self.news.active(now, (self.spec.currency_base, self.spec.currency_profit))
@@ -337,20 +340,56 @@ class SymbolTrader:
                 if not ok:
                     return why
                 kind = "flip"
-            self._open(want, kind, unit, tick, now)
+            sl_dist, why = self._stop_plan(want, kind, unit, tick, mine, now)
+            if why:
+                return why
+            self._open(want, kind, unit, tick, now, sl_dist)
             return None
         adds = sum(1 for m in mine if m.kind == "add")
         if adds >= self.cfg["max_adds"]:
             return "max adds reached"
-        if st.should_add([self._locked(m) for m in mine], adds, self.cfg):
-            self._open(want, "add", unit, tick, now)
-            return None
-        return "add waits until all stops lock profit"
+        if not st.should_add([self._locked(m) for m in mine], adds, self.cfg):
+            return "add waits until all stops lock profit"
+        sl_dist, why = self._stop_plan(want, "add", unit, tick, mine, now)
+        if why:
+            return why
+        self._open(want, "add", unit, tick, now, sl_dist)
+        return None
 
-    def _open(self, side, kind, unit, tick, now):
+    def _account(self, now):
+        """Account info, read at most once per second."""
+        if now - self._acct_t >= 1.0:
+            self._acct, self._acct_t = self.b.account(), now
+        return self._acct
+
+    def _stop_plan(self, side, kind, unit, tick, mine, now):
+        """Stop distance (price) for a new trade, or the reason it cannot open now.
+        An add shares the basket's locked stop: if the move ends, the whole basket leaves together."""
+        sp, cfg = self.spec, self.cfg
+        price = tick.ask if side == st.BUY else tick.bid
+        dist = cfg["stop_atr"] * unit
+        if kind == "add":
+            stops = [m.sl for m in mine if m.sl]
+            best = max(stops) if side == st.BUY else min(stops)
+            room = (price - best) if side == st.BUY else (best - price)
+            if room < cfg["add_min_room_atr"] * unit:
+                return None, "add waits: price too close to the basket stop"
+            dist = min(dist, room)
+        sl_dist = risk.stop_distance(sp, dist, tick.ask - tick.bid)
+        acct = self._account(now)
+        if acct is not None:
+            loss = sl_dist * sp.money_per_price(self.lot)
+            if config.MAX_RISK_PCT > 0 and loss > config.MAX_RISK_PCT / 100 * acct.equity:
+                return None, (f"stop too big for this account (one stop = {loss:.2f}, "
+                              f"over {config.MAX_RISK_PCT}% of equity {acct.equity:.2f})")
+            need = self.b.margin_needed(sp, side, self.lot, price)
+            if need is not None and need > acct.margin_free:
+                return None, f"not enough free margin (need {need:.2f}, free {acct.margin_free:.2f})"
+        return sl_dist, None
+
+    def _open(self, side, kind, unit, tick, now, sl_dist):
         sp, cfg = self.spec, self.cfg
         spread = tick.ask - tick.bid
-        sl_dist = risk.stop_distance(sp, cfg["stop_atr"] * unit, spread)
         tp_dist = risk.stop_distance(sp, cfg["target_atr"] * unit, spread)
         dev = risk.deviation_points(sp, self.ms.median_spread(), cfg["deviation_spreads"])
         self.last_entry = now
@@ -361,6 +400,11 @@ class SymbolTrader:
         if not res.ok:
             if res.market_closed:
                 self.market_closed_until = now + 60
+            if res.no_money:
+                self.no_money_until = now + config.NO_MONEY_PAUSE_S
+                self.j.event(self.name, "error", f"open {side} ({kind}) failed: not enough free margin. "
+                             f"No entries on this symbol for {config.NO_MONEY_PAUSE_S} s.")
+                return False
             self.j.event(self.name, "error", f"open {side} ({kind}) failed: {res.message}")
             return False
         if not self.trades:
@@ -374,7 +418,8 @@ class SymbolTrader:
         self.j.open_trade(ticket=res.ticket, symbol=self.name, side=side, kind=kind, basket=self.basket,
                           volume=self.lot, open_time=now, open_price=res.price, req_open_price=res.req_price,
                           open_slip_pts=slip, open_latency_ms=res.latency_ms, spread_open=spread,
-                          spread_cost=spread * sp.money_per_price(self.lot), unit=unit, sl=sl, tp=tp)
+                          spread_cost=spread * sp.money_per_price(self.lot), unit=unit, sl=sl, tp=tp,
+                          version=config.VERSION)
         if self.ctx:
             self.ctx.total_open += 1
             self.ctx.total_lots += self.lot

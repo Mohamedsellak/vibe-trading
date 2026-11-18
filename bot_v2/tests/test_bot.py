@@ -95,6 +95,64 @@ def test_pyramid_adds_only_after_every_stop_locks_profit(tmp_path):
     assert "max adds" in sim.tr.status or "max trades" in sim.tr.status
 
 
+def test_add_shares_the_basket_locked_stop(tmp_path):
+    sim = Sim(tmp_path, target_atr=10.0, max_adds=1)
+    open_buy(sim)
+    sim.run_until(lambda: len(sim.positions()) == 2, 15, drift=0.2)
+    base, add = sorted(sim.tr.trades.values(), key=lambda m: m.open_time)
+    assert base.kind == "base" and add.kind == "add" and sim.tr._locked(base)
+    gap = add.open_price - sim.fake.open_positions[add.ticket].sl
+    assert gap < 1.0 * ATR - 0.05                      # tighter than a full 1 ATR stop
+    assert abs(sim.fake.open_positions[add.ticket].sl - base.sl) < 0.02   # same level as the base stop
+
+
+def test_add_waits_when_price_is_too_close_to_basket_stop(tmp_path):
+    sim = Sim(tmp_path, target_atr=10.0, add_min_room_atr=5.0)   # room rule impossible to meet
+    open_buy(sim)
+    sim.run_until(lambda: sim.tr._locked(next(iter(sim.tr.trades.values()))), 10, drift=0.2)
+    sim.run(2, drift=0.2)
+    assert len(sim.positions()) == 1 and "too close to the basket stop" in sim.tr.status
+
+
+def test_no_entry_when_one_stop_is_too_big_for_the_account(tmp_path):
+    sim = Sim(tmp_path)
+    sim.fake.equity = 5.0                              # stop 1.05 x $1 = 1.05 > 10% of 5.00
+    sim.run(15, drift=0.2)
+    assert sim.positions() == [] and "stop too big for this account" in sim.tr.status
+
+
+def test_no_entry_without_free_margin(tmp_path):
+    sim = Sim(tmp_path)
+    sim.fake.margin_free = 0.1                         # needs 0.20 for 0.01 lot
+    sim.run(15, drift=0.2)
+    assert sim.positions() == [] and "not enough free margin" in sim.tr.status
+    assert not [e for e in sim.journal.feed if e[2] == "error"]   # checked before sending: no spam
+
+
+def test_broker_no_money_pauses_symbol_instead_of_retrying(tmp_path):
+    sim = Sim(tmp_path)
+    sim.fake.fail_next = [sim.fake.TRADE_RETCODE_NO_MONEY]
+    sim.run(20, drift=0.2)
+    errors = [e for e in sim.journal.feed if e[2] == "error"]
+    assert len(errors) == 1 and "not enough free margin" in errors[0][3]
+    assert sim.positions() == [] and "paused" in sim.tr.status
+    sim.run_until(lambda: sim.positions(), 60, drift=0.2)          # trades again after the pause
+
+
+def test_trades_are_tagged_with_version_and_report_cli_reads_them(tmp_path, monkeypatch, capsys):
+    import report
+    sim = Sim(tmp_path, max_adds=0)
+    p = open_buy(sim)
+    assert sim.journal.row(p.ticket)["version"] == config.VERSION
+    sim.bot.close_everything("manual stop", sim.t)
+    monkeypatch.chdir(tmp_path)                        # main() changes folder: restore it after the test
+    monkeypatch.setattr(config, "DB_FILE", str(tmp_path / "t.sqlite"))
+    monkeypatch.setattr(config, "LOG_DIR", str(tmp_path / "logs"))
+    assert report.main([]) == 0
+    out = capsys.readouterr().out
+    assert f"version {config.VERSION}, all sessions" in out and "trades 1" in out
+
+
 def test_no_add_while_a_trade_is_losing(tmp_path):
     sim = Sim(tmp_path)
     open_buy(sim)

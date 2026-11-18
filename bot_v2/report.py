@@ -12,7 +12,7 @@ TRADE_COLS = """ticket INTEGER PRIMARY KEY, symbol TEXT, side TEXT, kind TEXT, b
     volume REAL, open_time REAL, open_price REAL, req_open_price REAL, open_slip_pts REAL,
     open_latency_ms REAL, spread_open REAL, spread_cost REAL, unit REAL, sl REAL,
     close_time REAL, close_price REAL, close_reason TEXT, close_slip_pts REAL,
-    close_latency_ms REAL, pnl REAL, pnl_points REAL, peak_units REAL, tp REAL"""
+    close_latency_ms REAL, pnl REAL, pnl_points REAL, peak_units REAL, tp REAL, version TEXT"""
 # unit = ATR (price) frozen at open. peak_units = best profit seen, in ATR.
 
 STYLE = {"open": "cyan", "add": "cyan", "flip": "magenta", "close": "white",
@@ -167,16 +167,18 @@ def _block_lines(blocks):
     return ["  time spent: " + ", ".join(f"{k} {v:.0%}" for k, v in top)], share
 
 
-def build_report(journal, worst_floating, currency="", blocks=None):
+def build_report(journal, worst_floating, currency="", blocks=None, rows=None, title=None):
     """Rich-markup text lines. worst_floating = {symbol: most negative floating PnL seen}.
-    blocks = {symbol: {state: seconds}} from the traders (why the bot was not entering)."""
+    blocks = {symbol: {state: seconds}} from the traders (why the bot was not entering).
+    rows/title: report on these closed trades instead of this session's."""
     blocks = blocks or {}
-    rows = journal.closed_since(journal.session_start)
+    if rows is None:
+        rows = journal.closed_since(journal.session_start)
     by_sym = {}
     for r in rows:
         by_sym.setdefault(r["symbol"], []).append(r)
-    lines = [f"[bold]SESSION REPORT[/]  since {datetime.fromtimestamp(journal.session_start):%Y-%m-%d %H:%M:%S}"
-             f"  (money in {currency or 'account currency'}, after spread)"]
+    title = title or f"SESSION REPORT  since {datetime.fromtimestamp(journal.session_start):%Y-%m-%d %H:%M:%S}"
+    lines = [f"[bold]{title}[/]  (money in {currency or 'account currency'}, after spread)"]
     if not rows:
         lines.append("[yellow]No closed trades this session.[/]")
     groups = [(s, by_sym.get(s, [])) for s in sorted(set(by_sym) | set(worst_floating))]
@@ -224,3 +226,36 @@ def build_report(journal, worst_floating, currency="", blocks=None):
             lines.append("  [bold yellow]HONEST NOTE: most of the time the spread was too big for this symbol's "
                          "normal moves. On a Standard account it is too expensive to scalp here.[/]")
     return lines
+
+
+def version_rows(journal, version=None):
+    """Closed trades of one version (all versions if None), oldest first."""
+    if version is None:
+        return journal.db.execute("SELECT * FROM trades WHERE close_time IS NOT NULL ORDER BY close_time").fetchall()
+    return journal.db.execute("SELECT * FROM trades WHERE close_time IS NOT NULL AND version=? "
+                              "ORDER BY close_time", (version,)).fetchall()
+
+
+def main(argv=None):
+    """python report.py        -> every closed trade of this version, across all sessions
+    python report.py --all  -> every closed trade ever saved"""
+    import sys
+    import config
+    from rich.console import Console
+    argv = sys.argv[1:] if argv is None else argv
+    here = os.path.dirname(os.path.abspath(__file__))
+    os.chdir(here)
+    if not os.path.exists(config.DB_FILE):
+        print(f"No trade database yet ({config.DB_FILE}). Run the bot first.")
+        return 1
+    j = Journal(config.DB_FILE, config.LOG_DIR)
+    version = None if "--all" in argv else config.VERSION
+    rows = version_rows(j, version)
+    title = "REPORT  all versions" if version is None else f"REPORT  version {version}, all sessions"
+    for line in build_report(j, {}, "", rows=rows, title=title):
+        Console().print(line)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

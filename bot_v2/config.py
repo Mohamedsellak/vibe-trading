@@ -13,6 +13,7 @@ See CHANGELOG.md for what changed and why.
 # the bot finds the real name with symbols_get() at startup.
 SYMBOLS = ["XAUUSD", "BTCUSD", "EURUSD"]
 
+VERSION = "2.3"             # saved with every trade, so reports compare one version only (see CHANGELOG.md)
 MAGIC = 26111802            # tags the bot's own orders; other trades are ignored
 LOOP_MS = 25                # how often prices and trades are checked (ms)
 SCREEN_REFRESH_S = 1.0      # how often the screen redraws
@@ -25,6 +26,8 @@ SERVER_UTC_OFFSET_HOURS = 0
 MAX_TRADES_TOTAL = 8        # open bot trades, all symbols together
 MAX_TOTAL_LOTS = 0.20       # sum of open lots, all symbols together
 DAILY_LOSS_LIMIT = 0        # 0 = off. If set: close everything and stop entries for the day
+MAX_RISK_PCT = 10           # no entry if one trade's stop would lose more than 10% of equity
+NO_MONEY_PAUSE_S = 60       # after "no money" from the broker, no entries on that symbol for 60 s
 
 # Order handling
 ORDER_RETRIES = 3           # retries on requote / price changed / timeout
@@ -66,6 +69,7 @@ DEFAULTS = dict(
 
     # Pyramiding: add only when every open trade on that side has its stop locked in profit
     max_adds=3,                  # adds per direction
+    add_min_room_atr=0.3,        # an add needs at least 0.3 ATR between its price and the basket's locked stop
 
     # Flips (opposite trade after a stop loss)
     flip_cooldown_s=15,

@@ -16,6 +16,7 @@ class FakeMT5:
     TRADE_RETCODE_TIMEOUT = 10012
     TRADE_RETCODE_INVALID_STOPS = 10016
     TRADE_RETCODE_MARKET_CLOSED = 10018
+    TRADE_RETCODE_NO_MONEY = 10019
     TRADE_RETCODE_PRICE_CHANGED = 10020
     TRADE_RETCODE_PRICE_OFF = 10021
     TRADE_RETCODE_TOO_MANY_REQUESTS = 10024
@@ -36,6 +37,7 @@ class FakeMT5:
         self.next_ticket = 1000
         self.is_connected = True
         self.auto_stops = True
+        self.equity, self.margin_free, self.margin_per_lot = 1000.0, 1000.0, 20.0
 
     # ----- test helpers -----
     def add_symbol(self, name="XAUUSDm", point=0.01, digits=2, tick_value=1.0, contract=100.0,
@@ -110,8 +112,11 @@ class FakeMT5:
         return NS(connected=self.is_connected, trade_allowed=True)
 
     def account_info(self):
-        return NS(login=1, trade_mode=0, margin_mode=2, currency="USD", balance=1000.0,
-                  server="Fake-Demo", leverage=100)
+        return NS(login=1, trade_mode=0, margin_mode=2, currency="USD", balance=self.equity,
+                  equity=self.equity, margin_free=self.margin_free, server="Fake-Demo", leverage=100)
+
+    def order_calc_margin(self, kind, symbol, volume, price):
+        return self.margin_per_lot * volume
 
     def symbol_info(self, name):
         return self.symbols.get(name)

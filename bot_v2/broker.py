@@ -45,6 +45,7 @@ class OrderResult:
     market_closed: bool = False
     message: str = ""
     gone: bool = False          # the position was already closed (by its broker stop or target)
+    no_money: bool = False      # broker said: not enough free margin
     sl: float = 0.0             # stop and target the broker really holds (after a fill)
     tp: float = 0.0
 
@@ -92,6 +93,15 @@ class Broker:
 
     def account(self):
         return self.mt5.account_info()
+
+    def margin_needed(self, spec, side, volume, price):
+        """Margin for this order from MT5 itself, or None if MT5 cannot tell."""
+        m = self.mt5
+        kind = m.ORDER_TYPE_BUY if side == "BUY" else m.ORDER_TYPE_SELL
+        try:
+            return m.order_calc_margin(kind, spec.name, volume, price)
+        except Exception:
+            return None
 
     def terminal(self):
         return self.mt5.terminal_info()
@@ -211,6 +221,9 @@ class Broker:
                                message=f"retcode {res.retcode} {res.comment}")
             if res.retcode == m.TRADE_RETCODE_MARKET_CLOSED:
                 last.market_closed = True
+                return last
+            if res.retcode == getattr(m, "TRADE_RETCODE_NO_MONEY", 10019):
+                last.no_money = True
                 return last
             if res.retcode == self.GONE:
                 last.gone = True

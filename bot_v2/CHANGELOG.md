@@ -2,6 +2,22 @@
 
 One line per change: what changed, and which market behavior it targets.
 Compare session reports only between sessions run on the same version.
+Since v2.3 every trade is saved with its version, and `python report.py` shows one version's trades from all sessions together.
+
+## v2.3 (2026-11-18): smaller loss on the last add, money checks
+
+Based on v2.2 demo sessions (29 trades, all sessions together: +2.56). Gold: 21 trades, +3.40 total, +8.44 before spread. Still too few to prove anything.
+
+**Pyramiding**
+- **An add now shares the basket's locked stop** instead of getting its own full 1 ATR stop. Its stop sits at the best locked stop of that side (never farther than 1 ATR). *Behavior:* the last add of a basket is opened near the top of the move. In v2.2 the five last adds lost −18.47 together, each with a full stop of $3–4.5 on gold. When the move ends, the whole basket should now leave at the same price, and the last add loses about half as much.
+- **No add when the price is within 0.3 ATR of that shared stop** (`add_min_room_atr`). *Behavior:* with less room than that, normal noise would hit the stop right away, and the add would only pay the spread.
+
+**Money safety**
+- **Free margin is checked before each order** (MT5's own `order_calc_margin`). If the broker still answers "no money" (10019), that symbol pauses entries for 60 s (`NO_MONEY_PAUSE_S`). *Behavior:* v2.2 sent the same order again every few seconds and logged 47 "no money" errors while the account had no free margin.
+- **No entry if one trade's stop would lose more than 10% of equity** (`MAX_RISK_PCT`). *Behavior:* gold's ATR rose to about $3–3.8, so one stop was half of a $7 account. A scalper must survive a run of losses.
+
+**Report**
+- Every trade is saved with `VERSION` (now "2.3"). **`python report.py`** prints one report for all trades of this version, across every restart. `python report.py --all` covers every version.
 
 ## v2.2 (2026-11-18): exits only at price levels, safer adds, faster direction
 

@@ -1,4 +1,4 @@
-# bot_v2: live MT5 scalping bot (Exness, hedging account)-
+# bot_v2: live MT5 scalping bot (Exness, hedging account)
 
 A Python script that trades live in MetaTrader 5 while you watch it on screen.
 You choose the account: log in to MT5 with a demo account to test, and with a real account only when you decide to.
@@ -25,12 +25,13 @@ See `CHANGELOG.md` for what changed in each version and why.
 - **Sets a stop loss and a take profit at the broker** as soon as a trade opens: the stop 1 ATR away, the target 1.5 ATR away. So a win is bigger than a loss, and both work even if the bot stops.
 - **Trailing stop:** once a trade has been +0.8 ATR, the bot moves the broker stop up to 0.5 ATR behind the best price. The broker closes the trade there, with no bot delay.
 - **No time exit:** a trade closes only at a price level (stop, target or trailing stop), so you can see all of them on the MT5 chart. `stall_exit_s` can switch an optional time exit back on.
-- **Pyramids:** adds one more trade in the same direction only when every open trade on that side has its stop locked in profit (shown green on screen). So the basket can never lose more than one trade's stop. At most 3 adds per direction. It never adds to a losing trade.
+- **Pyramids:** adds one more trade in the same direction only when every open trade on that side has its stop locked in profit (shown green on screen). The add uses the same stop as the basket, so when the move ends they all close together. No add when the price is within 0.3 ATR of that stop. At most 3 adds per direction. It never adds to a losing trade.
 - **Flips:** after a stop loss, the next trade may be in the opposite direction, but only if the trend agrees. Protections: a 15 s cooldown after each flip, at most 20 flips per hour, and no entries while the market is choppy.
 - **No re-buying a failed move:** after a stop loss, no new trade on the same side for 5 s (the direction window), so only fresh prices count.
 - **Never trades against itself:** it opens no BUY while its own SELLs are open, and the other way round.
 - **Basket stop:** if one symbol's floating loss reaches `basket_stop_money`, the bot closes all trades on that symbol and pauses it for 15 minutes.
 - **Optional daily loss limit:** `DAILY_LOSS_LIMIT = 0` means off.
+- **Money checks:** no entry if one trade's stop would lose more than `MAX_RISK_PCT` (10%) of equity, or if free margin is too low. If the broker still says "no money", that symbol waits 60 s.
 - **No new entries** (open trades are still managed) when:
   - spread is above 1.5× its 10-minute median (shown as "spread too high")
   - the target is under 4× the current spread (shown as "spread too high vs volatility")
@@ -86,6 +87,13 @@ Below the panels, a feed shows the latest events.
   - all events and signals
 - `logs/bot.log` holds everything. `logs/<SYMBOL>.log` holds one symbol only.
 - `news_blackout.csv`: the rows in it are **examples**. Check the dates in a real economic calendar.
+
+## Report for many sessions
+The bot's report covers only the current session. To see every trade of this version together, even after many restarts:
+```bat
+.venv\Scripts\python.exe report.py
+```
+`report.py --all` shows every version together. Use the per-version report to judge a change.
 
 ## Session report (on exit, or press r)
 Shown per symbol and in total:
