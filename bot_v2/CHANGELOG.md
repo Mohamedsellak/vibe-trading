@@ -4,6 +4,14 @@ One line per change: what changed, and which market behavior it targets.
 Compare session reports only between sessions run on the same version.
 Since v2.3 every trade is saved with its version, and `python report.py` shows one version's trades from all sessions together.
 
+## v2.4 (2026-11-18): stricter cost gate, clearer startup
+
+Based on the v2.3 demo (22 trades, about 25 minutes, on a $10 balance): +1.65 in total. BTC made +1.84, mostly in one 10-minute selloff. EURUSD made −0.19, and +0.21 before spread. Gold made no trades: the 10% risk cap blocked it correctly. This is too little data to change the entry or exit rules, so this version changes none of them.
+
+- **Cost gate 4× → 6×:** no entry unless the target is at least 6× the spread, which means the normal one-minute move (ATR) must be at least 4 spreads. *Behavior:* EURUSD on a Standard account moves only about 2–3.5 spreads a minute. In v2.2 and v2.3 its 9 trades made +0.24 before spread and −0.48 after it. Its wins (+7 points) were smaller than one spread (8 points). Gold (11–15×) and BTC (6–26×) still pass.
+- **Startup line per symbol:** how much one stop costs right now, as a % of equity, and whether the risk cap will let that symbol trade. *Behavior:* on a $10 account one gold stop is about $3.50 (35%), so gold sat idle without a clear reason on screen.
+- `report.py` no longer prints "max floating drawdown +0.00", because it can't know the drawdown outside a live session.
+
 ## v2.3 (2026-11-18): smaller loss on the last add, money checks
 
 Based on v2.2 demo sessions (29 trades, all sessions together: +2.56). Gold: 21 trades, +3.40 total, +8.44 before spread. Still too few to prove anything.

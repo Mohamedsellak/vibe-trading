@@ -46,7 +46,7 @@ def test_spread_block():
     cfg = config.symbol_config("XAUUSD")
     assert risk.spread_block(0.2, 0.2, 1.5, cfg) is None                              # target 7.5 spreads
     assert risk.spread_block(0.4, 0.2, 1.5, cfg).startswith("spread too high")         # 2x median
-    assert "vs volatility" in risk.spread_block(0.2, 0.2, 0.7, cfg)                   # target 3.5 spreads < 4
+    assert "vs volatility" in risk.spread_block(0.2, 0.2, 1.1, cfg)                   # target 5.5 spreads < 6
 
 
 def test_limit_block():

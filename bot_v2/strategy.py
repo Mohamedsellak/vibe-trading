@@ -3,7 +3,7 @@
 1. DIRECTION: price move over the last 5 s: >= +0.25 ATR = UP, <= -0.25 ATR = DOWN, else FLAT.
 2. TREND: 1-minute bars, EMA(8) vs EMA(21); gap > 0.15 ATR = UP/DOWN. Entries need direction == trend.
 3. EXITS: all at the broker: stop 1 ATR, target 1.5 ATR, stop trails 0.5 ATR behind from +0.8 ATR.
-4. FILTERS: no entry if the 20-bar path zig-zags, or the target is under 4x the spread (too costly).
+4. FILTERS: no entry if the 20-bar path zig-zags, or the target is under 6x the spread (too costly).
 5. FLAW: with no real edge every trade loses about 1 spread on average; only the report can show an edge.
 """
 from __future__ import annotations

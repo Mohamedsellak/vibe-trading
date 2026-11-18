@@ -189,8 +189,9 @@ def build_report(journal, worst_floating, currency="", blocks=None, rows=None, t
         dd = (min(worst_floating.values()) if worst_floating else 0.0) if sym == "ALL" \
             else worst_floating.get(sym, 0.0)
         blines, share = _block_lines(blocks.get(sym, {}))
+        dd_text = f"   max floating drawdown {dd:+.2f}" if worst_floating else ""   # unknown outside a live session
         if not st["n"]:
-            lines.append(f"\n[bold underline]{sym}[/]  no closed trades   max floating drawdown {dd:+.2f}")
+            lines.append(f"\n[bold underline]{sym}[/]  no closed trades{dd_text}")
             lines += blines
         else:
             c = "green" if st["total"] > 0 else "red" if st["total"] < 0 else "white"
@@ -205,7 +206,7 @@ def build_report(journal, worst_floating, currency="", blocks=None, rows=None, t
                 f"avg hold: wins {st['hold_win']:.0f}s, losses {st['hold_loss']:.0f}s",
                 f"  flips {st['flips']} (profitable {st['flips_won']})   pyramid adds {st['adds']} "
                 f"(total {st['adds_total']:+.2f}, avg {st['adds_avg']:+.2f})",
-                f"  biggest losing basket {min(st['worst_basket'], 0.0):+.2f}   max floating drawdown {dd:+.2f}",
+                f"  biggest losing basket {min(st['worst_basket'], 0.0):+.2f}{dd_text}",
                 "  closed by: " + (", ".join(f"{k} {len(v)} (avg {_avg(v):+.2f})"
                                              for k, v in sorted(st["reasons"].items())) or "-"),
                 f"  orders: open {st['lat_open']:.0f} ms avg, slippage {st['slip_open']:+.0f} pts avg   "

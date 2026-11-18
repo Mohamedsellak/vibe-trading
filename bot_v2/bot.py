@@ -498,6 +498,21 @@ class Bot:
 
 
 # ---------------- startup / shutdown ----------------
+def stop_preview(tr, equity):
+    """One line at startup: how much one stop costs right now, and if the risk cap allows it."""
+    cfg, sp = tr.cfg, tr.spec
+    bars = tr.b.rates_m1(tr.name, cfg["atr_period"] + 3)
+    atr = st.atr(bars[:-1], cfg["atr_period"])
+    if atr <= 0 or not equity:
+        return f"{tr.name}: one stop = unknown yet (no ATR)", True
+    loss = cfg["stop_atr"] * atr * sp.money_per_price(tr.lot)
+    pct = 100 * loss / equity
+    ok = config.MAX_RISK_PCT <= 0 or pct <= config.MAX_RISK_PCT
+    verdict = "ok" if ok else f"over the {config.MAX_RISK_PCT}% cap: this symbol will NOT trade on this balance"
+    return f"{tr.name}: one stop now = {loss:.2f} ({pct:.1f}% of equity {equity:.2f}) - {verdict}", ok
+
+
+
 def check_server_offset(broker, traders, journal, console):
     newest = max((t.time for t in (broker.tick(tr.name) for tr in traders) if t), default=None)
     if newest is None:
@@ -574,6 +589,10 @@ def main():
         console.print("[red]No symbols available. Exiting.[/]")
         mt5.shutdown()
         return 1
+    for tr in traders:
+        line, ok = stop_preview(tr, acct.equity)
+        console.print(line if ok else f"[bold yellow]{line}[/]")
+        journal.event(tr.name, "info" if ok else "warn", line, show=False)
     check_server_offset(broker, traders, journal, console)
     bot = Bot(broker, journal, traders, config.MAX_TRADES_TOTAL, config.MAX_TOTAL_LOTS,
               config.DAILY_LOSS_LIMIT, config.SERVER_UTC_OFFSET_HOURS)

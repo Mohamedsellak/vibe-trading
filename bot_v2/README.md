@@ -15,7 +15,7 @@ Two yardsticks, both measured live from each symbol's own prices:
 1. **Direction:** price move over the last 5 s. +0.25 ATR or more = UP, −0.25 ATR or less = DOWN, otherwise FLAT.
 2. **Trend:** on 1-minute bars, EMA(8) against EMA(21). A gap over 0.15 ATR = UP or DOWN. A trade opens only when direction and trend agree.
 3. **Exits:** all at the broker. The stop is 1 ATR away and the target 1.5 ATR. From +0.8 ATR, the stop trails 0.5 ATR behind the best price.
-4. **Filters:** no entry if the last 20 bars zig-zag (net move ÷ total path < 0.25), or if the target is under 4× the spread (too costly).
+4. **Filters:** no entry if the last 20 bars zig-zag (net move ÷ total path < 0.25), or if the target is under 6× the spread (too costly).
 5. **Weak spot:** if the entries have no real edge, every trade loses about one spread on average, whatever the stop and target. Only the session report can show whether there is an edge.
 
 See `CHANGELOG.md` for what changed in each version and why.
@@ -34,7 +34,7 @@ See `CHANGELOG.md` for what changed in each version and why.
 - **Money checks:** no entry if one trade's stop would lose more than `MAX_RISK_PCT` (10%) of equity, or if free margin is too low. If the broker still says "no money", that symbol waits 60 s.
 - **No new entries** (open trades are still managed) when:
   - spread is above 1.5× its 10-minute median (shown as "spread too high")
-  - the target is under 4× the current spread (shown as "spread too high vs volatility")
+  - the target is under 6× the current spread (shown as "spread too high vs volatility")
   - the market is choppy
   - news is near (`news_blackout.csv`)
   - it is outside the session (server time: Mon–Fri 07:00–20:00 for gold and EUR, 24/7 for BTC)
@@ -61,6 +61,7 @@ copy .env.example .env
 ```
 - The bot shows a big **green DEMO** or **red REAL** banner. On REAL you must type `YES` before it trades.
 - It prints the real broker name for each symbol (Exness may add a suffix such as `XAUUSDm`).
+- It prints how much one stop costs on each symbol right now. A yellow line means that symbol will not trade on this balance (one stop is over `MAX_RISK_PCT` of equity). Gold needs about $40+ of equity at 0.01 lot.
 - **r** prints the session report at any time.
 - **Ctrl+C** stops the bot. It asks whether to close open trades (default: no, the trades stay open with their broker stops).
 - **Kill switch:** create a file named `STOP` in the folder (`type nul > STOP` in cmd). The bot closes all its trades and exits. Delete the file before the next start.
@@ -69,7 +70,7 @@ copy .env.example .env
 ## The screen
 One panel per symbol shows:
 - price, spread and normal spread
-- ATR, and ATR as a multiple of the spread (gold is usually far above 4x; EURUSD often is not)
+- ATR, and ATR as a multiple of the spread (entries need at least 4x; gold is usually far above, EURUSD often is not)
 - direction and trend
 - floating PnL, today's realized PnL, and flips this hour
 - a **status line** (yellow = waiting, green = in trade, red = problem)

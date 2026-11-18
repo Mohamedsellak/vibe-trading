@@ -13,7 +13,7 @@ See CHANGELOG.md for what changed and why.
 # the bot finds the real name with symbols_get() at startup.
 SYMBOLS = ["XAUUSD", "BTCUSD", "EURUSD"]
 
-VERSION = "2.3"             # saved with every trade, so reports compare one version only (see CHANGELOG.md)
+VERSION = "2.4"             # saved with every trade, so reports compare one version only (see CHANGELOG.md)
 MAGIC = 26111802            # tags the bot's own orders; other trades are ignored
 LOOP_MS = 25                # how often prices and trades are checked (ms)
 SCREEN_REFRESH_S = 1.0      # how often the screen redraws
@@ -78,7 +78,7 @@ DEFAULTS = dict(
     # Entry filters
     spread_window_s=600,         # median spread over the last 10 minutes
     spread_max_x_median=1.5,     # no entry if spread > 1.5 x its median
-    min_target_x_spread=4.0,     # no entry unless the target is >= 4 x the current spread
+    min_target_x_spread=6.0,     # no entry unless the target is >= 6 x the current spread (ATR >= 4 spreads)
     sessions=[("Mon-Fri", "07:00", "20:00")],   # server time
 
     # Per-symbol limits

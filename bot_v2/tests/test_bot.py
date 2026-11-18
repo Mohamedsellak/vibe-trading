@@ -153,6 +153,24 @@ def test_trades_are_tagged_with_version_and_report_cli_reads_them(tmp_path, monk
     assert f"version {config.VERSION}, all sessions" in out and "trades 1" in out
 
 
+def test_startup_shows_cost_of_one_stop_and_the_cap(tmp_path):
+    from bot import stop_preview
+    sim = Sim(tmp_path)
+    line, ok = stop_preview(sim.tr, 1000.0)            # stop 1.05 ATR x $1 = 1.05 = 0.1% of 1000
+    assert ok and "one stop now = 1.05" in line and "0.1% of equity" in line
+    line, ok = stop_preview(sim.tr, 5.0)               # 21% of 5.00 > 10%
+    assert not ok and "will NOT trade" in line
+
+
+def test_report_cli_does_not_invent_a_drawdown(tmp_path):
+    j = Journal(str(tmp_path / "r.sqlite"), str(tmp_path / "logs"))
+    j.open_trade(ticket=1, symbol=SYM, side="BUY", kind="base", basket=1, volume=0.01,
+                 open_time=j.session_start + 1, open_price=100.0, spread_cost=0.2, unit=1.0)
+    j.close_trade(1, close_time=j.session_start + 9, close_price=100.0, close_reason="target", pnl=1.0, pnl_points=100)
+    text = "\n".join(build_report(j, {}, "USD", rows=j.closed_since(0), title="REPORT"))
+    assert "max floating drawdown" not in text and "trades 1" in text
+
+
 def test_no_add_while_a_trade_is_losing(tmp_path):
     sim = Sim(tmp_path)
     open_buy(sim)
